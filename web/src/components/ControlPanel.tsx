@@ -4,21 +4,17 @@ interface Props {
   showVfr: boolean;
   showIfr: boolean;
   showUnknown: boolean;
-  showHelicopter: boolean;
   metric: Metric;
   minBin: number;
   maxBin: number;
   showAirspace: boolean;
-  showArrows: boolean;
   onToggleVfr: () => void;
   onToggleIfr: () => void;
   onToggleUnknown: () => void;
-  onToggleHelicopter: () => void;
   onMetricChange: (next: Metric) => void;
   onMinBinChange: (value: number) => void;
   onMaxBinChange: (value: number) => void;
   onToggleAirspace: () => void;
-  onToggleArrows: () => void;
 }
 
 export function ControlPanel(props: Props) {
@@ -37,10 +33,6 @@ export function ControlPanel(props: Props) {
         <label className="flex items-center gap-2">
           <input type="checkbox" checked={props.showUnknown} onChange={props.onToggleUnknown} />
           Unknown
-        </label>
-        <label className="flex items-center gap-2">
-          <input type="checkbox" checked={props.showHelicopter} onChange={props.onToggleHelicopter} />
-          Helicopter
         </label>
       </div>
 
@@ -77,10 +69,6 @@ export function ControlPanel(props: Props) {
       <div className="mt-3 flex items-center gap-2 text-xs">
         <input id="airspace" type="checkbox" checked={props.showAirspace} onChange={props.onToggleAirspace} />
         <label htmlFor="airspace">Airspace</label>
-      </div>
-      <div className="mt-1 flex items-center gap-2 text-xs">
-        <input id="arrows" type="checkbox" checked={props.showArrows} onChange={props.onToggleArrows} />
-        <label htmlFor="arrows">Direction arrows</label>
       </div>
     </div>
   );

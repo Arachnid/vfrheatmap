@@ -13,14 +13,12 @@ class AltBinValue(BaseModel):
 
 class TileCell(BaseModel):
     h3: str
-    vehicle_class: str
     flight_count: int
     time_seconds: float
     mean_track_x: float
     mean_track_y: float
     coherence: float
     mean_speed: float
-    track_hist: list[int] = Field(min_length=16, max_length=16)
     alt_bins: list[AltBinValue]
 
 

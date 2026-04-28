@@ -56,24 +56,24 @@ def _table_for(classification: str, resolution: int) -> str:
 def _load_rows(
     conn: duckdb.DuckDBPyConnection,
     table_name: str,
-) -> list[tuple[int, int, str, int, float, float, float, list[int], float, int]]:
+) -> list[tuple[int, int, int, float, float, float, float, int]]:
     return conn.execute(
         f"""
-        SELECT h3_cell, alt_bin, vehicle_class, flight_count, time_seconds,
-               sum_cos_track, sum_sin_track, track_hist, sum_speed, point_count
+        SELECT h3_cell, alt_bin, flight_count, time_seconds,
+               sum_cos_track, sum_sin_track, sum_speed, point_count
         FROM {table_name}
         """
     ).fetchall()
 
 
 def _rollup_to_res5(
-    rows: list[tuple[int, int, str, int, float, float, float, list[int], float, int]],
-) -> list[tuple[int, int, str, int, float, float, float, list[int], float, int]]:
-    grouped: dict[tuple[int, int, str], dict[str, float | int | list[int]]] = {}
+    rows: list[tuple[int, int, int, float, float, float, float, int]],
+) -> list[tuple[int, int, int, float, float, float, float, int]]:
+    grouped: dict[tuple[int, int], dict[str, float | int]] = {}
     for row in rows:
-        h3_cell, alt_bin, vehicle_class, flight_count, time_seconds, sum_cos, sum_sin, track_hist, sum_speed, point_count = row
+        h3_cell, alt_bin, flight_count, time_seconds, sum_cos, sum_sin, sum_speed, point_count = row
         parent = int(h3.str_to_int(h3.cell_to_parent(h3.int_to_str(int(h3_cell)), 5)))
-        key = (parent, int(alt_bin), str(vehicle_class))
+        key = (parent, int(alt_bin))
         agg = grouped.setdefault(
             key,
             {
@@ -81,7 +81,6 @@ def _rollup_to_res5(
                 "time_seconds": 0.0,
                 "sum_cos": 0.0,
                 "sum_sin": 0.0,
-                "track_hist": [0] * 16,
                 "sum_speed": 0.0,
                 "point_count": 0,
             },
@@ -92,21 +91,16 @@ def _rollup_to_res5(
         agg["sum_sin"] = float(agg["sum_sin"]) + float(sum_sin)
         agg["sum_speed"] = float(agg["sum_speed"]) + float(sum_speed)
         agg["point_count"] = int(agg["point_count"]) + int(point_count)
-        hist = agg["track_hist"]
-        for idx in range(16):
-            hist[idx] += int(track_hist[idx]) if idx < len(track_hist) else 0
-    output: list[tuple[int, int, str, int, float, float, float, list[int], float, int]] = []
-    for (h3_cell, alt_bin, vehicle_class), agg in grouped.items():
+    output: list[tuple[int, int, int, float, float, float, float, int]] = []
+    for (h3_cell, alt_bin), agg in grouped.items():
         output.append(
             (
                 h3_cell,
                 alt_bin,
-                vehicle_class,
                 int(agg["flight_count"]),
                 float(agg["time_seconds"]),
                 float(agg["sum_cos"]),
                 float(agg["sum_sin"]),
-                list(agg["track_hist"]),
                 float(agg["sum_speed"]),
                 int(agg["point_count"]),
             )
@@ -114,28 +108,21 @@ def _rollup_to_res5(
     return output
 
 
-def _normalize_track_hist(hist: list[int]) -> list[int]:
-    max_val = max(hist) if hist else 0
-    if max_val <= 0:
-        return [0] * 16
-    return [int(round((v / max_val) * 255)) for v in hist[:16]]
-
-
 def _build_tile_payloads(
-    rows: list[tuple[int, int, str, int, float, float, float, list[int], float, int]],
+    rows: list[tuple[int, int, int, float, float, float, float, int]],
     zoom: int,
     h3_resolution: int,
     bbox: tuple[float, float, float, float],
 ) -> tuple[dict[TileKey, list[TileCell]], set[int]]:
     min_lat, min_lon, max_lat, max_lon = bbox
-    per_cell: dict[tuple[int, str], dict[str, object]] = {}
+    per_cell: dict[int, dict[str, object]] = {}
     alt_bins_seen: set[int] = set()
     for row in rows:
-        h3_cell, alt_bin, vehicle_class, flight_count, time_seconds, sum_cos, sum_sin, track_hist, sum_speed, point_count = row
+        h3_cell, alt_bin, flight_count, time_seconds, sum_cos, sum_sin, sum_speed, point_count = row
         lat, lon = h3.cell_to_latlng(h3.int_to_str(int(h3_cell)))
         if lat < min_lat or lat > max_lat or lon < min_lon or lon > max_lon:
             continue
-        key = (int(h3_cell), str(vehicle_class))
+        key = int(h3_cell)
         entry = per_cell.setdefault(
             key,
             {
@@ -145,7 +132,6 @@ def _build_tile_payloads(
                 "sum_sin": 0.0,
                 "sum_speed": 0.0,
                 "point_count": 0,
-                "track_hist": [0] * 16,
                 "alt_bins": [],
             },
         )
@@ -155,14 +141,11 @@ def _build_tile_payloads(
         entry["sum_sin"] = float(entry["sum_sin"]) + float(sum_sin)
         entry["sum_speed"] = float(entry["sum_speed"]) + float(sum_speed)
         entry["point_count"] = int(entry["point_count"]) + int(point_count)
-        hist = entry["track_hist"]
-        for idx in range(16):
-            hist[idx] += int(track_hist[idx]) if idx < len(track_hist) else 0
         entry["alt_bins"].append(AltBinValue(bin_index=int(alt_bin), time_seconds=float(time_seconds), flight_count=int(flight_count)))
         alt_bins_seen.add(int(alt_bin))
 
     tiles: dict[TileKey, list[TileCell]] = defaultdict(list)
-    for (h3_cell, vehicle_class), agg in per_cell.items():
+    for h3_cell, agg in per_cell.items():
         time_seconds = float(agg["time_seconds"])
         point_count = int(agg["point_count"])
         mean_track_x = float(agg["sum_cos"]) / time_seconds if time_seconds > 0 else 0.0
@@ -173,14 +156,12 @@ def _build_tile_payloads(
         tiles[tile_key].append(
             TileCell(
                 h3=h3.int_to_str(int(h3_cell)),
-                vehicle_class=vehicle_class,
                 flight_count=int(agg["flight_count"]),
                 time_seconds=time_seconds,
                 mean_track_x=mean_track_x,
                 mean_track_y=mean_track_y,
                 coherence=coherence,
                 mean_speed=mean_speed,
-                track_hist=_normalize_track_hist(list(agg["track_hist"])),
                 alt_bins=sorted(list(agg["alt_bins"]), key=lambda x: x.bin_index),
             )
         )
@@ -207,7 +188,7 @@ def build_tiles(config: BuildTilesConfig, logger: logging.Logger | None = None) 
     altitude_bins: set[int] = set()
     available_resolutions = sorted(set(ZOOM_TO_H3_RESOLUTION.values()))
     for classification in ("vfr", "ifr", "unknown"):
-        rows_by_res: dict[int, list[tuple[int, int, str, int, float, float, float, list[int], float, int]]] = {}
+        rows_by_res: dict[int, list[tuple[int, int, int, float, float, float, float, int]]] = {}
         for resolution in (6, 7, 8, 9):
             table_name = _table_for(classification, resolution)
             rows_by_res[resolution] = _load_rows(conn, table_name)

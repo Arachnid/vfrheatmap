@@ -1,5 +1,4 @@
 export type Classification = "vfr" | "ifr" | "unknown";
-export type VehicleClass = "fixed_wing" | "helicopter";
 export type Metric = "flight_count" | "time_seconds";
 
 export interface AltBinValue {
@@ -10,14 +9,12 @@ export interface AltBinValue {
 
 export interface TileCell {
   h3: string;
-  vehicle_class: VehicleClass;
   flight_count: number;
   time_seconds: number;
   mean_track_x: number;
   mean_track_y: number;
   coherence: number;
   mean_speed: number;
-  track_hist: number[];
   alt_bins: AltBinValue[];
 }
 

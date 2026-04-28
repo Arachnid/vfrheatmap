@@ -5,10 +5,10 @@ import maplibregl from "maplibre-gl";
 
 import { BottomBar } from "./components/BottomBar";
 import { ControlPanel } from "./components/ControlPanel";
-import { buildArrowLayer, buildTrafficLayer } from "./layers/traffic";
+import { buildTrafficLayer } from "./layers/traffic";
 import { filterCellsByAltitude } from "./tiles/filter";
 import { TileManager } from "./tiles/manager";
-import { tilesForViewport } from "./tiles/tileMath";
+import { tilesForViewport, type TileKey } from "./tiles/tileMath";
 import type { Classification, Manifest, Metric, TileCell } from "./types";
 
 const tileManager = new TileManager();
@@ -56,16 +56,11 @@ export default function App() {
   const [showVfr, setShowVfr] = useState(true);
   const [showIfr, setShowIfr] = useState(false);
   const [showUnknown, setShowUnknown] = useState(false);
-  const [showHelicopter, setShowHelicopter] = useState(true);
   const [metric, setMetric] = useState<Metric>("flight_count");
   const [minBin, setMinBin] = useState(0);
   const [maxBin, setMaxBin] = useState(60);
   const [showAirspace, setShowAirspace] = useState(true);
-  const [showArrows, setShowArrows] = useState(true);
-  const [viewBounds, setViewBounds] = useState<{ west: number; south: number; east: number; north: number } | null>(
-    null
-  );
-  const [viewZoom, setViewZoom] = useState(6);
+  const [visibleTiles, setVisibleTiles] = useState<TileKey[]>([]);
 
   const selectedClassifications = useMemo(() => {
     const values: Classification[] = [];
@@ -132,27 +127,10 @@ export default function App() {
     const overlay = new MapboxOverlay({ interleaved: true, layers: [] });
     overlayRef.current = overlay;
     map.addControl(overlay);
-    let lastViewportUpdate = 0;
-    const updateViewportState = () => {
-      const now = performance.now();
-      if (now - lastViewportUpdate < 80) {
-        return;
-      }
-      lastViewportUpdate = now;
-      const bounds = map.getBounds();
-      setViewZoom(map.getZoom());
-      setViewBounds({
-        west: bounds.getWest(),
-        south: bounds.getSouth(),
-        east: bounds.getEast(),
-        north: bounds.getNorth(),
-      });
-    };
     const reloadTiles = async () => {
       const requestId = ++requestSeqRef.current;
       const bounds = map.getBounds();
       const zoom = map.getZoom();
-      updateViewportState();
       const visibleTiles = tilesForViewport(
         {
           west: bounds.getWest(),
@@ -168,6 +146,7 @@ export default function App() {
         zoom,
         visibleTileCount: visibleTiles.length,
       });
+      setVisibleTiles(visibleTiles);
       const tileCells = (
         await Promise.all(selectedClassificationsRef.current.map((c) => tileManager.loadTiles(c, visibleTiles)))
       ).flat();
@@ -182,7 +161,6 @@ export default function App() {
     };
     reloadTilesRef.current = reloadTiles;
     map.on("load", () => {
-      updateViewportState();
       reloadTiles().catch((error: unknown) => {
         if (error instanceof DOMException && error.name === "AbortError") {
           return;
@@ -191,7 +169,6 @@ export default function App() {
         setError("Failed to load tile data");
       });
     });
-    map.on("move", updateViewportState);
     map.on("moveend", () => {
       reloadTiles().catch((error: unknown) => {
         if (error instanceof DOMException && error.name === "AbortError") {
@@ -203,7 +180,6 @@ export default function App() {
     });
     return () => {
       reloadTilesRef.current = null;
-      map.off("move", updateViewportState);
       map.remove();
       mapRef.current = null;
       overlayRef.current = null;
@@ -260,20 +236,9 @@ export default function App() {
     applyAirspace().catch(() => setError("Failed to load airspace"));
   }, [showAirspace]);
 
-  const filteredByVehicle = useMemo(
-    () =>
-      cells.filter((cell) => {
-        if (showHelicopter) {
-          return true;
-        }
-        return cell.vehicle_class !== "helicopter";
-      }),
-    [cells, showHelicopter]
-  );
-
   const renderableCells = useMemo(
-    () => filterCellsByAltitude(filteredByVehicle, Math.min(minBin, maxBin), Math.max(minBin, maxBin), metric),
-    [filteredByVehicle, minBin, maxBin, metric]
+    () => filterCellsByAltitude(cells, Math.min(minBin, maxBin), Math.max(minBin, maxBin), metric),
+    [cells, minBin, maxBin, metric]
   );
   const flightsTotal = renderableCells.reduce((acc, cell) => acc + cell.selectedFlightCount, 0);
   const secondsTotal = renderableCells.reduce((acc, cell) => acc + cell.selectedTimeSeconds, 0);
@@ -283,17 +248,10 @@ export default function App() {
       return;
     }
     const layers: Layer[] = [];
-    const trafficLayer = buildTrafficLayer(renderableCells, viewBounds, viewZoom);
-    if (trafficLayer) {
-      layers.push(trafficLayer);
-    }
-    const arrowLayer = buildArrowLayer(renderableCells, showArrows);
-    if (arrowLayer) {
-      layers.push(arrowLayer);
-    }
+    const trafficLayers = buildTrafficLayer(renderableCells, visibleTiles);
+    layers.push(...trafficLayers);
     console.debug("[app] updating deck layers", {
       renderableCells: renderableCells.length,
-      showArrows,
       layerCount: layers.length,
     });
     try {
@@ -302,7 +260,7 @@ export default function App() {
       console.error("[app] failed to update deck layers", layerError);
       setError("Failed to render traffic layers");
     }
-  }, [renderableCells, showArrows, viewBounds, viewZoom]);
+  }, [renderableCells, visibleTiles]);
 
   if (error) {
     return <div className="p-4 text-sm text-red-700">{error}</div>;
@@ -315,21 +273,17 @@ export default function App() {
         showVfr={showVfr}
         showIfr={showIfr}
         showUnknown={showUnknown}
-        showHelicopter={showHelicopter}
         metric={metric}
         minBin={minBin}
         maxBin={maxBin}
         showAirspace={showAirspace}
-        showArrows={showArrows}
         onToggleVfr={() => setShowVfr((prev) => !prev)}
         onToggleIfr={() => setShowIfr((prev) => !prev)}
         onToggleUnknown={() => setShowUnknown((prev) => !prev)}
-        onToggleHelicopter={() => setShowHelicopter((prev) => !prev)}
         onMetricChange={setMetric}
         onMinBinChange={setMinBin}
         onMaxBinChange={setMaxBin}
         onToggleAirspace={() => setShowAirspace((prev) => !prev)}
-        onToggleArrows={() => setShowArrows((prev) => !prev)}
       />
       {manifest ? (
         <BottomBar

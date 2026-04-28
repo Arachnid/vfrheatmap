@@ -1,7 +1,8 @@
-import { BitmapLayer, LineLayer } from "@deck.gl/layers";
+import { BitmapLayer } from "@deck.gl/layers";
 import { cellToBoundary, cellToLatLng } from "h3-js";
 
 import type { RenderableCell } from "../types";
+import type { TileKey } from "../tiles/tileMath";
 
 interface ViewBounds {
   west: number;
@@ -31,6 +32,8 @@ type BucketIndex = {
   gridSize: number;
   buckets: Map<number, number[]>;
 };
+const TILE_CACHE_MAX = 512;
+const heatTileCache = new Map<string, HTMLCanvasElement>();
 
 function lonToMercatorX(lon: number): number {
   return (lon + 180) / 360;
@@ -42,15 +45,44 @@ function latToMercatorY(lat: number): number {
   return (1 - Math.log(Math.tan(rad) + 1 / Math.cos(rad)) / Math.PI) / 2;
 }
 
+function clampLat(lat: number): number {
+  return Math.max(-85.05112878, Math.min(85.05112878, lat));
+}
+
+function lonToTileX(lon: number, z: number): number {
+  const n = 2 ** z;
+  return Math.floor(((lon + 180) / 360) * n);
+}
+
+function latToTileY(lat: number, z: number): number {
+  const n = 2 ** z;
+  const latRad = (clampLat(lat) * Math.PI) / 180;
+  const y = (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2;
+  return Math.floor(y * n);
+}
+
+function tileBounds(tile: TileKey): ViewBounds {
+  const n = 2 ** tile.z;
+  const west = (tile.x / n) * 360 - 180;
+  const east = ((tile.x + 1) / n) * 360 - 180;
+  const mercatorToLat = (y: number): number => {
+    const m = Math.PI * (1 - (2 * y) / n);
+    return (180 / Math.PI) * Math.atan(0.5 * (Math.exp(m) - Math.exp(-m)));
+  };
+  const north = mercatorToLat(tile.y);
+  const south = mercatorToLat(tile.y + 1);
+  return { west, south, east, north };
+}
+
 function colorForIntensity(intensity: number): [number, number, number, number] {
   const t = Math.max(0, Math.min(1, intensity));
   // Matches the existing blue->orange ramp style.
   const stops: Array<[number, number, number, number]> = [
-    [20, 60, 120, 0],
-    [45, 95, 160, 70],
-    [70, 140, 190, 120],
-    [130, 180, 140, 160],
-    [220, 170, 90, 210],
+    [20, 60, 120, 35],
+    [45, 95, 160, 110],
+    [70, 140, 190, 165],
+    [130, 180, 140, 205],
+    [220, 170, 90, 230],
     [255, 110, 45, 245],
   ];
   const scaled = t * (stops.length - 1);
@@ -114,27 +146,52 @@ function nearest3IdwValue(px: number, py: number, points: InterpolationPoint[], 
       break;
     }
   }
-  const source = candidates.length > 0 ? candidates : points.map((_, idx) => idx);
-  for (const idx of source) {
-    const p = points[idx];
-    const dx = px - p.x;
-    const dy = py - p.y;
-    const d = dx * dx + dy * dy;
-    if (d < d1) {
-      d3 = d2;
-      v3 = v2;
-      d2 = d1;
-      v2 = v1;
-      d1 = d;
-      v1 = p.value;
-    } else if (d < d2) {
-      d3 = d2;
-      v3 = v2;
-      d2 = d;
-      v2 = p.value;
-    } else if (d < d3) {
-      d3 = d;
-      v3 = p.value;
+  if (candidates.length > 0) {
+    for (const idx of candidates) {
+      const p = points[idx];
+      const dx = px - p.x;
+      const dy = py - p.y;
+      const d = dx * dx + dy * dy;
+      if (d < d1) {
+        d3 = d2;
+        v3 = v2;
+        d2 = d1;
+        v2 = v1;
+        d1 = d;
+        v1 = p.value;
+      } else if (d < d2) {
+        d3 = d2;
+        v3 = v2;
+        d2 = d;
+        v2 = p.value;
+      } else if (d < d3) {
+        d3 = d;
+        v3 = p.value;
+      }
+    }
+  } else {
+    // Rare fallback: no nearby buckets populated. Scan all points once.
+    for (let idx = 0; idx < points.length; idx += 1) {
+      const p = points[idx];
+      const dx = px - p.x;
+      const dy = py - p.y;
+      const d = dx * dx + dy * dy;
+      if (d < d1) {
+        d3 = d2;
+        v3 = v2;
+        d2 = d1;
+        v2 = v1;
+        d1 = d;
+        v1 = p.value;
+      } else if (d < d2) {
+        d3 = d2;
+        v3 = v2;
+        d2 = d;
+        v2 = p.value;
+      } else if (d < d3) {
+        d3 = d;
+        v3 = p.value;
+      }
     }
   }
   // Exact centroid hit.
@@ -152,7 +209,12 @@ function nearest3IdwValue(px: number, py: number, points: InterpolationPoint[], 
   return (w1 * v1 + w2 * v2 + w3 * v3) / wSum;
 }
 
-function buildInterpolatedImage(bounds: ViewBounds, cells: RenderableCell[]): { data: Uint8ClampedArray; width: number; height: number } | null {
+function buildInterpolatedImage(
+  bounds: ViewBounds,
+  cells: RenderableCell[],
+  normalizationMax: number,
+  tileZoom: number
+): { data: Uint8ClampedArray; width: number; height: number } | null {
   const westX = lonToMercatorX(bounds.west);
   const eastX = lonToMercatorX(bounds.east);
   const northY = latToMercatorY(bounds.north);
@@ -161,7 +223,6 @@ function buildInterpolatedImage(bounds: ViewBounds, cells: RenderableCell[]): { 
   const spanX = Math.max(1e-9, eastX - westX);
   const spanY = Math.max(1e-9, Math.abs(southY - northY));
   const points: InterpolationPoint[] = [];
-  let maxValue = 0;
 
   for (const cell of cells) {
     const [lat, lon] = cellToLatLng(cell.h3);
@@ -172,17 +233,16 @@ function buildInterpolatedImage(bounds: ViewBounds, cells: RenderableCell[]): { 
       continue;
     }
     points.push({ lon, lat, x, y, value });
-    if (value > maxValue) {
-      maxValue = value;
-    }
   }
 
-  if (points.length === 0 || maxValue <= 0) {
+  if (points.length === 0 || normalizationMax <= 0) {
     return null;
   }
 
-  // Reduce raster resolution when point counts are high to keep interaction smooth.
-  const quality = points.length > 5000 ? 120 : points.length > 2000 ? 150 : 200;
+  // Lower tile raster resolution at high zoom where many tiles are visible.
+  // This is the main lever for responsiveness during zoomed-in pans.
+  const baseQuality = tileZoom >= 10 ? 96 : tileZoom >= 9 ? 120 : 160;
+  const quality = points.length > 5000 ? Math.min(baseQuality, 96) : points.length > 2000 ? Math.min(baseQuality, 120) : baseQuality;
   const width = quality;
   const height = quality;
   const bucketIndex = buildBucketIndex(points);
@@ -207,13 +267,33 @@ function buildInterpolatedImage(bounds: ViewBounds, cells: RenderableCell[]): { 
     const yNorm = (py + 0.5) / height;
     for (let px = 0; px < width; px += 1) {
       const xNorm = (px + 0.5) / width;
+      // Use the nearest-neighbour candidate distance from the IDW pass directly,
+      // avoiding an extra O(N points) scan for every pixel.
+      const nearestValue = nearest3IdwValue(xNorm, yNorm, points, bucketIndex);
+      if (!Number.isFinite(nearestValue)) {
+        continue;
+      }
       let nearestSq = Number.POSITIVE_INFINITY;
-      for (const p of points) {
-        const dx = xNorm - p.x;
-        const dy = yNorm - p.y;
-        const d2 = dx * dx + dy * dy;
-        if (d2 < nearestSq) {
-          nearestSq = d2;
+      const { gridSize, buckets } = bucketIndex;
+      const cx = Math.max(0, Math.min(gridSize - 1, Math.floor(xNorm * gridSize)));
+      const cy = Math.max(0, Math.min(gridSize - 1, Math.floor(yNorm * gridSize)));
+      for (let ring = 0; ring <= 2; ring += 1) {
+        for (let by = Math.max(0, cy - ring); by <= Math.min(gridSize - 1, cy + ring); by += 1) {
+          for (let bx = Math.max(0, cx - ring); bx <= Math.min(gridSize - 1, cx + ring); bx += 1) {
+            const bucket = buckets.get(by * gridSize + bx);
+            if (!bucket) {
+              continue;
+            }
+            for (const idx of bucket) {
+              const p = points[idx];
+              const dx = xNorm - p.x;
+              const dy = yNorm - p.y;
+              const d2 = dx * dx + dy * dy;
+              if (d2 < nearestSq) {
+                nearestSq = d2;
+              }
+            }
+          }
         }
       }
       if (!Number.isFinite(nearestSq) || nearestSq > influenceRadiusSq) {
@@ -224,11 +304,9 @@ function buildInterpolatedImage(bounds: ViewBounds, cells: RenderableCell[]): { 
         image[idx + 3] = 0;
         continue;
       }
-
-      const value = nearest3IdwValue(xNorm, yNorm, points, bucketIndex);
-      const normalized = Math.max(0, Math.min(1, value / maxValue));
-      // Gentle contrast for low-value structure without hotspot look.
-      const shaped = Math.pow(normalized, 0.7);
+      const normalized = Math.max(0, Math.min(1, nearestValue / normalizationMax));
+      // Lift weak values so the layer stays visible while preserving gradients.
+      const shaped = Math.pow(normalized, 0.55);
       const [r, g, b, a] = colorForIntensity(shaped);
       const idx = (py * width + px) * 4;
       image[idx] = r;
@@ -240,159 +318,116 @@ function buildInterpolatedImage(bounds: ViewBounds, cells: RenderableCell[]): { 
   return { data: image, width, height };
 }
 
-export function buildTrafficLayer(cells: RenderableCell[], viewBounds: ViewBounds | null, _viewZoom: number) {
-  if (cells.length === 0) {
-    return null;
+function tileCacheGetOrCreate(key: string, image: { data: Uint8ClampedArray; width: number; height: number }): HTMLCanvasElement | null {
+  const hit = heatTileCache.get(key);
+  if (hit) {
+    heatTileCache.delete(key);
+    heatTileCache.set(key, hit);
+    return hit;
   }
-  if (!viewBounds) {
-    return null;
-  }
-  const bounds = normalizeBounds(viewBounds);
-  const image = buildInterpolatedImage(bounds, cells);
-  if (!image) {
-    return null;
-  }
-  const bitmapCanvas = document.createElement("canvas");
-  bitmapCanvas.width = image.width;
-  bitmapCanvas.height = image.height;
-  const ctx = bitmapCanvas.getContext("2d");
+  const canvas = document.createElement("canvas");
+  canvas.width = image.width;
+  canvas.height = image.height;
+  const ctx = canvas.getContext("2d");
   if (!ctx) {
     return null;
   }
-  const pixelData = new Uint8ClampedArray(image.data);
-  ctx.putImageData(new ImageData(pixelData, image.width, image.height), 0, 0);
-  return new BitmapLayer({
-    id: "traffic-layer",
-    image: bitmapCanvas,
-    bounds: [bounds.west, bounds.south, bounds.east, bounds.north],
-    desaturate: 0,
-    transparentColor: [0, 0, 0, 0],
-    textureParameters: {
-      minFilter: "linear",
-      magFilter: "linear",
-      mipmapFilter: "none",
-      addressModeU: "clamp-to-edge",
-      addressModeV: "clamp-to-edge",
-    },
-    parameters: { depthTest: false },
-  });
+  ctx.putImageData(new ImageData(new Uint8ClampedArray(image.data), image.width, image.height), 0, 0);
+  heatTileCache.set(key, canvas);
+  if (heatTileCache.size > TILE_CACHE_MAX) {
+    const oldest = heatTileCache.keys().next().value as string | undefined;
+    if (oldest) {
+      heatTileCache.delete(oldest);
+    }
+  }
+  return canvas;
 }
 
-export function buildArrowLayer(cells: RenderableCell[], enabled: boolean) {
-  if (!enabled) {
-    return null;
+function tileSignature(cells: RenderableCell[]): string {
+  let metricSum = 0;
+  let maxMetric = 0;
+  for (const c of cells) {
+    metricSum += c.metricValue;
+    maxMetric = Math.max(maxMetric, c.metricValue);
   }
-  const DIRECTIONAL_SHARE_THRESHOLD = 0.5;
-  const lines: Array<{ sourcePosition: [number, number]; targetPosition: [number, number] }> = [];
-  const wrapIndex = (idx: number) => ((idx % 16) + 16) % 16;
-  const axisShare = (hist: number[], headingBin: number) => {
-    const total = hist.reduce((acc, value) => acc + value, 0);
-    if (total <= 0) {
-      return 0;
+  return `${cells.length}:${Math.round(metricSum)}:${Math.round(maxMetric)}`;
+}
+
+export function buildTrafficLayer(cells: RenderableCell[], visibleTiles: TileKey[]): BitmapLayer[] {
+  if (cells.length === 0 || visibleTiles.length === 0) {
+    return [];
+  }
+  const globalMax = cells.reduce((max, c) => Math.max(max, c.metricValue), 0);
+  if (globalMax <= 0) {
+    return [];
+  }
+  // Quantize autoscale to improve tile-cache hit rate while preserving viewport scaling behavior.
+  const scaleStep = Math.max(1, Math.round(globalMax * 0.05));
+  const normalizedScale = Math.max(scaleStep, Math.round(globalMax / scaleStep) * scaleStep);
+
+  const byTile = new Map<string, RenderableCell[]>();
+  for (const cell of cells) {
+    const [lat, lon] = cellToLatLng(cell.h3);
+    const z = visibleTiles[0].z;
+    const x = lonToTileX(lon, z);
+    const y = latToTileY(lat, z);
+    const key = `${z}/${x}/${y}`;
+    const list = byTile.get(key);
+    if (list) {
+      list.push(cell);
+    } else {
+      byTile.set(key, [cell]);
     }
-    const opposite = wrapIndex(headingBin + 8);
-    const bins = [
-      wrapIndex(headingBin - 1),
-      headingBin,
-      wrapIndex(headingBin + 1),
-      wrapIndex(opposite - 1),
-      opposite,
-      wrapIndex(opposite + 1),
-    ];
-    const aligned = bins.reduce((acc, idx) => acc + (hist[idx] ?? 0), 0);
-    return aligned / total;
-  };
-  const arrowLengthDeg = (h3Cell: string, lat: number, lon: number) => {
-    const boundary = cellToBoundary(h3Cell);
-    if (boundary.length === 0) {
-      return 0.02;
-    }
-    const latRad = (lat * Math.PI) / 180;
-    const cosLat = Math.max(0.25, Math.cos(latRad));
-    let minRadius = Number.POSITIVE_INFINITY;
-    for (const [bLat, bLon] of boundary) {
-      const dx = (bLon - lon) * cosLat;
-      const dy = bLat - lat;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist < minRadius) {
-        minRadius = dist;
+  }
+
+  const layers: BitmapLayer[] = [];
+  for (const tile of visibleTiles) {
+    const bounds = normalizeBounds(tileBounds(tile));
+    const candidates: RenderableCell[] = [];
+    for (let dx = -1; dx <= 1; dx += 1) {
+      for (let dy = -1; dy <= 1; dy += 1) {
+        const neigh = byTile.get(`${tile.z}/${tile.x + dx}/${tile.y + dy}`);
+        if (neigh) {
+          candidates.push(...neigh);
+        }
       }
     }
-    if (!Number.isFinite(minRadius) || minRadius <= 0) {
-      return 0.02;
-    }
-    return minRadius * 0.75;
-  };
-  const addArrow = (lon: number, lat: number, east: number, north: number, lengthDeg: number) => {
-    const latRad = (lat * Math.PI) / 180;
-    const cosLat = Math.max(0.25, Math.cos(latRad));
-    const mag = Math.sqrt(east * east + north * north);
-    if (mag <= 1e-6) {
-      return;
-    }
-    const ux = east / mag;
-    const uy = north / mag;
-    lines.push({
-      sourcePosition: [lon, lat],
-      targetPosition: [lon + (ux * lengthDeg) / cosLat, lat + uy * lengthDeg],
-    });
-  };
-
-  for (const cell of cells) {
-    if (cell.metricValue <= 0 || cell.coherence < 0.3) {
+    if (candidates.length === 0) {
       continue;
     }
-    const [lat, lon] = cellToLatLng(cell.h3);
-    const length = arrowLengthDeg(cell.h3, lat, lon);
-    if (cell.coherence > 0.6) {
-      const heading = (Math.atan2(cell.mean_track_y, cell.mean_track_x) * 180) / Math.PI;
-      const headingNorm = (heading + 360) % 360;
-      const headingBin = Math.floor(headingNorm / 22.5) % 16;
-      if (axisShare(cell.track_hist, headingBin) < DIRECTIONAL_SHARE_THRESHOLD) {
+    const cacheKey = `${tile.z}/${tile.x}/${tile.y}:${tileSignature(candidates)}:scale${normalizedScale}`;
+    let canvas = heatTileCache.get(cacheKey) ?? null;
+    if (!canvas) {
+      const image = buildInterpolatedImage(bounds, candidates, normalizedScale, tile.z);
+      if (!image) {
         continue;
       }
-      addArrow(lon, lat, cell.mean_track_y, cell.mean_track_x, length);
-      continue;
-    }
-    const hist = cell.track_hist;
-    const peak1 = hist.reduce((best, value, idx) => (value > hist[best] ? idx : best), 0);
-    const opposite = (peak1 + 8) % 16;
-    const peak2Candidates = [opposite, (opposite + 1) % 16, (opposite + 15) % 16];
-    const peak2 = peak2Candidates.reduce((best, idx) => (hist[idx] > hist[best] ? idx : best), peak2Candidates[0]);
-    const low = Math.min(hist[peak1], hist[peak2]);
-    const troughIdx = (peak1 + 4) % 16;
-    const trough = hist[troughIdx];
-    const heading = (Math.atan2(cell.mean_track_y, cell.mean_track_x) * 180) / Math.PI;
-    const headingNorm = (heading + 360) % 360;
-    const headingBin = Math.floor(headingNorm / 22.5) % 16;
-    const dominantAxisShare = axisShare(hist, headingBin);
-    if (low <= 0 || trough > low * 0.3) {
-      if (dominantAxisShare >= DIRECTIONAL_SHARE_THRESHOLD) {
-        addArrow(lon, lat, cell.mean_track_y, cell.mean_track_x, length);
+      canvas = tileCacheGetOrCreate(cacheKey, image);
+      if (!canvas) {
+        continue;
       }
-      continue;
+    } else {
+      heatTileCache.delete(cacheKey);
+      heatTileCache.set(cacheKey, canvas);
     }
-    if (axisShare(hist, peak1) < DIRECTIONAL_SHARE_THRESHOLD) {
-      continue;
-    }
-    const angle1 = ((peak1 + 0.5) * 360) / 16;
-    const angle2 = ((peak2 + 0.5) * 360) / 16;
-    const vec = (angleDeg: number) => {
-      const rad = (angleDeg * Math.PI) / 180;
-      return [Math.sin(rad), Math.cos(rad)] as const;
-    };
-    const [x1, y1] = vec(angle1);
-    const [x2, y2] = vec(angle2);
-    addArrow(lon, lat, x1, y1, length);
-    addArrow(lon, lat, x2, y2, length);
+
+    layers.push(
+      new BitmapLayer({
+        id: `traffic-layer-${tile.z}-${tile.x}-${tile.y}`,
+        image: canvas,
+        bounds: [bounds.west, bounds.south, bounds.east, bounds.north],
+        desaturate: 0,
+        transparentColor: [0, 0, 0, 0],
+        textureParameters: {
+          minFilter: "linear",
+          magFilter: "linear",
+          mipmapFilter: "none",
+          addressModeU: "clamp-to-edge",
+          addressModeV: "clamp-to-edge",
+        },
+        parameters: { depthTest: false },
+      })
+    );
   }
-  return new LineLayer({
-    id: "direction-arrows",
-    data: lines,
-    getSourcePosition: (d: { sourcePosition: [number, number] }) => d.sourcePosition,
-    getTargetPosition: (d: { targetPosition: [number, number] }) => d.targetPosition,
-    getColor: [30, 30, 30, 190],
-    getWidth: 2,
-    widthUnits: "pixels",
-  });
+  return layers;
 }
