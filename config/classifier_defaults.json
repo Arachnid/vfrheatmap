@@ -1,0 +1,7 @@
+{
+  "gap_seconds": 120,
+  "vfr_alt_max_ft": 10000,
+  "ifr_alt_min_ft": 15000,
+  "vfr_straightness_max": 0.85,
+  "ifr_straightness_min": 0.95
+}

@@ -1,0 +1,41 @@
+[project]
+name = "adsb-vfr"
+version = "0.1.0"
+description = "ADS-B VFR traffic aggregation pipeline built on Ray Datasets."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "ray[default]",
+  "typer",
+  "httpx",
+  "cdsapi",
+  "xarray",
+  "netCDF4",
+  "h3",
+  "duckdb",
+  "pyarrow",
+  "numpy",
+  "pandas",
+  "tqdm",
+  "orjson",
+  "pydantic",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest",
+]
+
+[project.scripts]
+adsb-vfr = "adsb_vfr.cli:app"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["adsb_vfr", "adsb_vfr.lib"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
