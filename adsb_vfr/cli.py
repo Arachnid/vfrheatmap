@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
@@ -11,8 +10,11 @@ import typer
 
 from adsb_vfr.config import DEFAULT_BBOX, load_classifier_config
 from adsb_vfr.download import ensure_inputs
+from adsb_vfr.lib.airspace_lookup import load_airspace_lookup
+from adsb_vfr.lib.openaip_key import resolve_openaip_api_key
 from adsb_vfr.finalise import FinaliseInput, finalise_to_duckdb
 from adsb_vfr.pipeline import build_and_run_pipeline, load_era5_lookup
+from adsb_vfr.tiles.cli import build_tiles_command
 
 app = typer.Typer(help="ADS-B VFR aggregation tools.")
 
@@ -42,6 +44,17 @@ def ingest(
     ray_address: str = typer.Option("", "--ray-address"),
     num_cpus: int | None = typer.Option(None, "--num-cpus"),
     object_store_memory_gb: int | None = typer.Option(None, "--object-store-memory-gb"),
+    openaip_api_key: str | None = typer.Option(
+        None,
+        "--openaip-api-key",
+        help="OpenAIP API key for airspace-assisted IFR/VFR propagation (or .openaip-api-key).",
+    ),
+    openaip_key_file: Path | None = typer.Option(
+        None,
+        "--openaip-key-file",
+        help="Optional OpenAIP API key file path.",
+    ),
+    refresh_airspace: bool = typer.Option(False, "--refresh-airspace", help="Refresh cached OpenAIP pages."),
     log_level: str = typer.Option("INFO", "--log-level"),
 ) -> None:
     logging.basicConfig(level=getattr(logging, log_level.upper(), logging.INFO))
@@ -84,11 +97,20 @@ def ingest(
 
     era5_lookup = load_era5_lookup(era5_paths=manifest.era5_files, bbox=bbox_tuple, start=start, end=end)
     era5_ref = ray.put(era5_lookup)
+    api_key = resolve_openaip_api_key(openaip_api_key, dotfile_path=openaip_key_file)
+    airspace_lookup = load_airspace_lookup(
+        cache_dir=cache_dir,
+        bbox=bbox_tuple,
+        api_key=api_key,
+        refresh=refresh_airspace,
+    )
+    airspace_ref = ray.put(airspace_lookup)
     ingest_result = build_and_run_pipeline(
         trace_items=manifest.trace_files,
         era5_ref=era5_ref,
         classifier_config=classifier_config,
         bbox=bbox_tuple,
+        airspace_ref=airspace_ref,
     )
     finished_at = datetime.now(tz=UTC)
     finalise_to_duckdb(
@@ -108,9 +130,26 @@ def ingest(
 
 
 @app.command("build-tiles")
-def build_tiles() -> None:
-    """Placeholder command for static tile generation."""
-    typer.echo("build-tiles is not implemented yet.")
+def build_tiles(
+    input_path: Path = typer.Option(Path("./output/aggregates.duckdb"), "--input", help="DuckDB file from ingest."),
+    output_dir: Path = typer.Option(Path("./web/public/data"), "--output-dir", help="Output directory for static files."),
+    bbox: str | None = typer.Option(None, "--bbox", help="MINLAT,MINLON,MAXLAT,MAXLON."),
+    openaip_api_key: str | None = typer.Option(None, "--openaip-api-key", help="OpenAIP API key (or .openaip-api-key)."),
+    openaip_key_file: Path | None = typer.Option(None, "--openaip-key-file", help="Optional OpenAIP API key file path."),
+    cache_dir: Path = typer.Option(Path("./cache"), "--cache-dir"),
+    refresh_airspace: bool = typer.Option(False, "--refresh-airspace"),
+    log_level: str = typer.Option("INFO", "--log-level"),
+) -> None:
+    build_tiles_command(
+        input_path=input_path,
+        output_dir=output_dir,
+        bbox=bbox,
+        openaip_api_key=openaip_api_key,
+        openaip_key_file=openaip_key_file,
+        cache_dir=cache_dir,
+        refresh_airspace=refresh_airspace,
+        log_level=log_level,
+    )
 
 
 if __name__ == "__main__":

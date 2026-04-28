@@ -19,6 +19,8 @@ dependencies = [
   "tqdm",
   "orjson",
   "pydantic",
+  "shapely",
+  "mercantile",
 ]
 
 [project.optional-dependencies]
@@ -34,7 +36,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["adsb_vfr", "adsb_vfr.lib"]
+packages = ["adsb_vfr", "adsb_vfr.lib", "adsb_vfr.tiles"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

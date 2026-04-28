@@ -23,8 +23,14 @@ htmlcov/
 # Runtime and data outputs
 cache/
 output/
+web/public/data/
+web/dist/
+.openaip-api-key
 
 # IDE and OS cruft
 .DS_Store
 .idea/
 .vscode/
+
+# Frontend dependencies
+web/node_modules/

@@ -14,6 +14,7 @@ import ray
 from ray.data.aggregate import AggregateFn, Count, CountDistinct, Sum
 
 from adsb_vfr.config import ClassifierConfig
+from adsb_vfr.lib.airspace_lookup import AirspaceLookup
 from adsb_vfr.lib.classifier import VFR_CLASSES, SegmentFeatures, classify_segment
 from adsb_vfr.lib.era5_lookup import Era5Lookup
 from adsb_vfr.lib.geo import densify_segment, great_circle_distance_nm, h3_cell, heading_bin_index, initial_bearing_deg, straightness_ratio
@@ -81,6 +82,15 @@ def _get_lookup(ref: ray.ObjectRef) -> Era5Lookup:
     return lookup
 
 
+def _get_airspace_lookup(ref: ray.ObjectRef | None) -> AirspaceLookup:
+    if ref is None:
+        return AirspaceLookup.empty()
+    lookup = ray.get(ref)
+    if not isinstance(lookup, AirspaceLookup):
+        raise TypeError("Expected AirspaceLookup in Ray object store.")
+    return lookup
+
+
 def _segment_id(hex_id: str, start_ts: pd.Timestamp, end_ts: pd.Timestamp, squawk: str, icao_type: str) -> int:
     payload = f"{hex_id}|{start_ts.isoformat()}|{end_ts.isoformat()}|{squawk}|{icao_type}"
     digest = hashlib.blake2b(payload.encode("utf-8"), digest_size=8).digest()
@@ -142,11 +152,17 @@ def parse_correct_flatmap(
     return out_rows
 
 
-def _build_edge_rows(batch: pd.DataFrame, classifier_config: ClassifierConfig) -> pd.DataFrame:
+def _build_edge_rows(
+    batch: pd.DataFrame,
+    classifier_config: ClassifierConfig,
+    airspace_ref: ray.ObjectRef | None = None,
+    airspace_lookup: AirspaceLookup | None = None,
+) -> pd.DataFrame:
     if batch.empty:
         return pd.DataFrame()
     batch = batch.sort_values(["hex_id", "timestamp"]).reset_index(drop=True)
     gap_s = classifier_config.thresholds.gap_seconds
+    resolved_airspace_lookup = airspace_lookup if airspace_lookup is not None else _get_airspace_lookup(airspace_ref)
     outputs: list[dict[str, Any]] = []
 
     for hex_id, g in batch.groupby("hex_id", sort=False):
@@ -160,6 +176,13 @@ def _build_edge_rows(batch: pd.DataFrame, classifier_config: ClassifierConfig) -
         g["squawk"] = g["squawk"].replace("", pd.NA).ffill().fillna("")
         g["icao_type"] = g["icao_type"].replace("", pd.NA).ffill().bfill().fillna("")
         g["emitter_category"] = g["emitter_category"].replace("", pd.NA).ffill().bfill().fillna("")
+        class_a_hits, any_airspace_hits = resolved_airspace_lookup.flags_for_points(
+            lats=g["lat"].to_numpy(dtype=np.float64),
+            lons=g["lon"].to_numpy(dtype=np.float64),
+        )
+        g["in_class_a"] = class_a_hits
+        g["in_any_airspace"] = any_airspace_hits
+        journey_all_controlled = bool(g["in_any_airspace"].all())
         split_indices = [0]
         prev = g.iloc[0]
         for idx in range(1, len(g)):
@@ -175,6 +198,7 @@ def _build_edge_rows(batch: pd.DataFrame, classifier_config: ClassifierConfig) -
             prev = row
         split_indices.append(len(g))
 
+        segment_infos: list[dict[str, Any]] = []
         for start_idx, end_idx in zip(split_indices[:-1], split_indices[1:]):
             seg = g.iloc[start_idx:end_idx].copy()
             if len(seg) < 2:
@@ -201,7 +225,64 @@ def _build_edge_rows(batch: pd.DataFrame, classifier_config: ClassifierConfig) -
                 max_alt_qnh_ft=float(seg["alt_qnh_ft"].max()),
                 straightness=float(straightness),
             )
-            classification, vehicle_class = classify_segment(features, classifier_config)
+            base_classification, vehicle_class = classify_segment(features, classifier_config)
+            squawk = str(seg.iloc[-1]["squawk"])
+            squawk_is_vfr = squawk == "7000" or squawk in classifier_config.listening_squawks
+            squawk_is_ifr = False
+            if squawk.isdigit():
+                squawk_value = int(squawk)
+                squawk_is_ifr = any(start <= squawk_value <= end for start, end in classifier_config.ifr_discrete_ranges)
+            segment_infos.append(
+                {
+                    "segment_id": seg_id,
+                    "segment_df": seg,
+                    "base_classification": base_classification,
+                    "vehicle_class": vehicle_class,
+                    "squawk_is_vfr": squawk_is_vfr,
+                    "squawk_is_ifr": squawk_is_ifr,
+                    "has_class_g": bool((~seg["in_any_airspace"]).any()),
+                    "has_class_a": bool(seg["in_class_a"].any()),
+                }
+            )
+
+        status_by_segment: list[str] = ["unknown"] * len(segment_infos)
+        current_status = "unknown"
+        if journey_all_controlled:
+            status_by_segment = ["ifr"] * len(segment_infos)
+            current_status = "ifr"
+        for idx, info in enumerate(segment_infos):
+            if journey_all_controlled:
+                continue
+            evidence_ifr = bool(info["squawk_is_ifr"]) or bool(info["has_class_a"])
+            evidence_vfr = bool(info["squawk_is_vfr"]) or bool(info["has_class_g"])
+            # Keep IFR sticky once observed for the journey unless we see fresh IFR evidence.
+            # This avoids downgrading instrument arrivals to VFR after transient Class G detections.
+            if current_status == "ifr" and not evidence_ifr:
+                status_by_segment[idx] = "ifr"
+            elif evidence_ifr:
+                current_status = "ifr"
+                status_by_segment[idx] = "ifr"
+            elif evidence_vfr:
+                current_status = "vfr"
+                status_by_segment[idx] = "vfr"
+            else:
+                status_by_segment[idx] = current_status
+            if status_by_segment[idx] in {"ifr", "vfr"}:
+                backfill_idx = idx - 1
+                while backfill_idx >= 0 and status_by_segment[backfill_idx] == "unknown":
+                    status_by_segment[backfill_idx] = status_by_segment[idx]
+                    backfill_idx -= 1
+
+        for info, persistent_status in zip(segment_infos, status_by_segment):
+            seg = info["segment_df"]
+            classification = str(info["base_classification"])
+            if classification != "heavy":
+                if persistent_status == "ifr":
+                    classification = "ifr"
+                elif persistent_status == "vfr":
+                    if classification not in VFR_CLASSES:
+                        # Keep VFR-group semantics while preserving existing fine-grained labels when possible.
+                        classification = "vfr_medium"
 
             for i in range(1, len(seg)):
                 p1 = seg.iloc[i - 1]
@@ -233,10 +314,10 @@ def _build_edge_rows(batch: pd.DataFrame, classifier_config: ClassifierConfig) -
                     ground_speed_kt = max(0.0, float(p1_speed))
                 outputs.append(
                     {
-                        "segment_id": seg_id,
+                        "segment_id": int(info["segment_id"]),
                         "hex_id": hex_id,
                         "classification": classification,
-                        "vehicle_class": vehicle_class,
+                        "vehicle_class": str(info["vehicle_class"]),
                         "start_ts": p1["timestamp"],
                         "end_ts": p2["timestamp"],
                         "start_lat": float(p1["lat"]),
@@ -253,8 +334,18 @@ def _build_edge_rows(batch: pd.DataFrame, classifier_config: ClassifierConfig) -
     return pd.DataFrame(outputs)
 
 
-def segment_to_edges_batch(batch: pd.DataFrame, classifier_config: ClassifierConfig) -> pd.DataFrame:
-    return _build_edge_rows(batch=batch, classifier_config=classifier_config)
+def segment_to_edges_batch(
+    batch: pd.DataFrame,
+    classifier_config: ClassifierConfig,
+    airspace_ref: ray.ObjectRef | None = None,
+    airspace_lookup: AirspaceLookup | None = None,
+) -> pd.DataFrame:
+    return _build_edge_rows(
+        batch=batch,
+        classifier_config=classifier_config,
+        airspace_ref=airspace_ref,
+        airspace_lookup=airspace_lookup,
+    )
 
 
 def densify_edge(edge: dict[str, Any]) -> list[dict[str, Any]]:
@@ -354,6 +445,7 @@ def build_and_run_pipeline(
     era5_ref: ray.ObjectRef,
     classifier_config: ClassifierConfig,
     bbox: tuple[float, float, float, float],
+    airspace_ref: ray.ObjectRef | None = None,
 ) -> IngestResult:
     temp_dir = Path(tempfile.mkdtemp(prefix="adsb_vfr_"))
     pipeline_output_dir = temp_dir / "pipeline_output"
@@ -373,7 +465,7 @@ def build_and_run_pipeline(
     edges_ds = points_ds.map_batches(
         segment_to_edges_batch,
         batch_format="pandas",
-        fn_kwargs={"classifier_config": classifier_config},
+        fn_kwargs={"classifier_config": classifier_config, "airspace_ref": airspace_ref},
     )
     densified_ds = edges_ds.flat_map(densify_edge)
     keyed_ds = densified_ds.map(add_aggregate_keys).filter(lambda r: r.get("classification_group") is not None)

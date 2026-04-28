@@ -1,6 +1,6 @@
-# ADS-B VFR Traffic Aggregation Pipeline
+# ADS-B VFR Hotness
 
-This project ingests historical ADS-B traces, applies pressure-altitude correction from ERA5, classifies flight segments, and writes H3/altitude aggregates into DuckDB for static tile serving.
+`adsb-vfr` ingests ADS-B traces, applies ERA5 pressure correction, classifies segments, and builds H3/altitude aggregates for static map rendering.
 
 ## Install
 
@@ -10,41 +10,24 @@ source .venv/bin/activate
 pip install -e .[dev]
 ```
 
-## CDS API setup
+## CDS API Setup
 
-ERA5 downloads use Copernicus CDS via `cdsapi`.
-
-1. Create a CDS account and API key at [cds.climate.copernicus.eu](https://cds.climate.copernicus.eu/)
-2. Add `~/.cdsapirc`:
+ERA5 downloads require a Copernicus CDS API key in `~/.cdsapirc`:
 
 ```text
 url: https://cds.climate.copernicus.eu/api
 key: <uid>:<api-key>
 ```
 
-If this file is missing, ingest fails with a setup hint.
+## Ingest Command
 
-## Quick start
+Run with defaults:
 
 ```bash
 adsb-vfr ingest
 ```
 
-Defaults:
-- Date range: last 30 full UTC days (`--start-date`, `--end-date`)
-- BBox: `49,-8,61,2`
-- Cache dir: `./cache`
-- Output DB: `./output/aggregates.duckdb`
-
-Offline mode (requires pre-populated cache):
-
-```bash
-adsb-vfr ingest --skip-fetch
-```
-
-## CLI
-
-`adsb-vfr ingest` options:
+Important options:
 - `--start-date YYYY-MM-DD`
 - `--end-date YYYY-MM-DD`
 - `--bbox MINLAT,MINLON,MAXLAT,MAXLON`
@@ -55,50 +38,104 @@ adsb-vfr ingest --skip-fetch
 - `--ray-address ADDR`
 - `--num-cpus N`
 - `--object-store-memory-gb N`
+- `--openaip-api-key KEY`
+- `--openaip-key-file PATH`
+- `--refresh-airspace`
 - `--log-level {DEBUG,INFO,WARNING,ERROR}`
 
-`adsb-vfr build-tiles` exists as a stub for future tile packaging.
+Only immutable inputs are cached (`cache/traces`, `cache/era5`); the Ray pipeline recomputes every run.
 
-## Cache behavior
+## Build Tiles Command
 
-Only immutable downloads are cached:
-- `cache/traces/YYYY-MM-DD/YYYY-MM-DD.tar`
-- `cache/era5/mslp_YYYY-MM_<bbox-hash>.nc`
-
-Everything else is recomputed each run by design (no intermediate stage caches).
-
-## Output schema
-
-DuckDB includes:
-- `aggregates_vfr_res{9,8,7,6}`
-- `aggregates_ifr_res{9,8,7,6}`
-- `aggregates_unknown_res{9,8,7,6}`
-- `ingest_runs`
-
-Aggregate columns: `h3_cell`, `alt_bin`, `vehicle_class`, `flight_count`, `time_seconds`, directional sums, `track_hist` (INTEGER[16]), speed moments, and `point_count`.
-
-## Known limitations
-
-- ADS-B coverage gaps are common at low altitude in rural terrain.
-- MSLP is used as a QNH proxy; for this use case the error is much smaller than bin resolution.
-- Rule-based classification can produce false positives/negatives.
-- Entire Ray pipeline re-runs on every invocation (download cache only).
-
-# ADS-B VFR Hotness
-
-Ray-oriented ingest pipeline for ADS-B traces and ERA5 pressure correction.
-
-## Quick start
+`build-tiles` converts DuckDB aggregates into static files for the web app:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .[dev]
-adsb-vfr ingest
+adsb-vfr build-tiles \
+  --input ./output/aggregates.duckdb \
+  --output-dir ./web/public/data
 ```
 
-## Notes
+OpenAIP key lookup order:
+- `--openaip-api-key`
+- `--openaip-key-file /path/to/file`
+- `./.openaip-api-key` (repo root)
+- `~/.openaip-api-key`
+- `OPENAIP_API_KEY` (fallback)
 
-- Add a valid `~/.cdsapirc` to enable ERA5 downloads.
-- Cache is stage-based under `./cache`.
-- Use `--no-cache-<stage>` flags to invalidate stage outputs.
+Example dotfile:
+
+```text
+# first non-comment line is used
+your-openaip-key-here
+```
+
+Options:
+- `--input PATH`
+- `--output-dir PATH`
+- `--bbox MINLAT,MINLON,MAXLAT,MAXLON` (defaults from latest `ingest_runs`)
+- `--openaip-api-key KEY`
+- `--openaip-key-file PATH`
+- `--cache-dir PATH` (`cache/openaip` used internally)
+- `--refresh-airspace`
+- `--log-level {DEBUG,INFO,WARNING,ERROR}`
+
+Output layout:
+- `manifest.json`
+- `tiles/{vfr|ifr|unknown}/z{z}/x{x}/y{y}.json.gz`
+- `airspace/uk.geojson.gz`
+- `airspace/style.json`
+
+## Web Frontend
+
+The static SPA is in `web/` (Vite + React + TypeScript + MapLibre + deck.gl).
+
+Local development:
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+Production build:
+
+```bash
+cd web
+npm run build
+```
+
+`web/public/data/` is populated by `adsb-vfr build-tiles`.
+
+## GitHub Pages Deployment
+
+Workflow: `.github/workflows/deploy.yml`
+
+On push to `main`, it:
+1. Installs Python project.
+2. Retrieves DuckDB (release URL by default, LFS fallback).
+3. Runs `adsb-vfr build-tiles`.
+4. Builds `web/dist`.
+5. Deploys via `actions/deploy-pages`.
+
+Required secret:
+- `OPENAIP_API_KEY`
+
+Optional repo variable:
+- `DUCKDB_RELEASE_URL` (if empty, workflow expects Git LFS file at `output/aggregates.duckdb`).
+
+## Methodology Notes and Caveats
+
+- VFR/IFR/unknown groups come from the rule-based segment classifier in the ingest pipeline.
+- Altitudes are pressure-corrected with ERA5 MSLP as a QNH proxy.
+- Coherence is derived from normalized directional vectors (`sum_cos_track`, `sum_sin_track`).
+- Low-coherence cells intentionally suppress directional arrows.
+- ADS-B reception is uneven at low altitude and in rural terrain.
+- Classification can produce false positives and false negatives.
+- Output is for exploratory analysis only, **not for operational flight planning**.
+
+## Attribution
+
+- ADS-B data: ADS-B Exchange / adsb.lol contributors
+- Airspace data: OpenAIP
+- Basemap: provider specified in frontend configuration
+- Pressure data: ECMWF / Copernicus Climate Data Store (ERA5)
