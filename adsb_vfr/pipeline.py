@@ -15,9 +15,9 @@ from ray.data.aggregate import AggregateFn, Count, CountDistinct, Sum
 
 from adsb_vfr.config import ClassifierConfig
 from adsb_vfr.lib.airspace_lookup import AirspaceLookup
-from adsb_vfr.lib.classifier import VFR_CLASSES, SegmentFeatures, classify_segment
+from adsb_vfr.lib.classifier import VFR_CLASSES, SegmentFeatures, classify_segment, is_always_ifr_emitter, is_always_vfr_type
 from adsb_vfr.lib.era5_lookup import Era5Lookup
-from adsb_vfr.lib.geo import densify_segment, great_circle_distance_nm, h3_cell, heading_bin_index, initial_bearing_deg, straightness_ratio
+from adsb_vfr.lib.geo import densify_segment, great_circle_distance_nm, h3_cell, heading_bin_index, initial_bearing_deg
 from adsb_vfr.lib.trace_format import iter_trace_tarball_points
 import h3
 
@@ -176,12 +176,27 @@ def _build_edge_rows(
         g["squawk"] = g["squawk"].replace("", pd.NA).ffill().fillna("")
         g["icao_type"] = g["icao_type"].replace("", pd.NA).ffill().bfill().fillna("")
         g["emitter_category"] = g["emitter_category"].replace("", pd.NA).ffill().bfill().fillna("")
-        class_a_hits, any_airspace_hits = resolved_airspace_lookup.flags_for_points(
-            lats=g["lat"].to_numpy(dtype=np.float64),
-            lons=g["lon"].to_numpy(dtype=np.float64),
-        )
-        g["in_class_a"] = class_a_hits
-        g["in_any_airspace"] = any_airspace_hits
+        first_emitter = str(g.iloc[0]["emitter_category"])
+        first_icao_type = str(g.iloc[0]["icao_type"])
+        journey_force_ifr = is_always_ifr_emitter(first_emitter)
+        journey_force_vfr = (not journey_force_ifr) and is_always_vfr_type(first_icao_type)
+        journey_force_classification: str | None = None
+        if journey_force_ifr:
+            journey_force_classification = "ifr"
+        elif journey_force_vfr:
+            journey_force_classification = "vfr_type"
+
+        if journey_force_classification is None:
+            class_a_hits, any_airspace_hits = resolved_airspace_lookup.flags_for_points(
+                lats=g["lat"].to_numpy(dtype=np.float64),
+                lons=g["lon"].to_numpy(dtype=np.float64),
+            )
+            g["in_class_a"] = class_a_hits
+            g["in_any_airspace"] = any_airspace_hits
+        else:
+            # List-based hard classification: skip behavioral airspace evaluation entirely.
+            g["in_class_a"] = False
+            g["in_any_airspace"] = False
         journey_all_controlled = bool(g["in_any_airspace"].all())
         split_indices = [0]
         prev = g.iloc[0]
@@ -191,7 +206,6 @@ def _build_edge_rows(
             changed = (
                 ts_gap > gap_s
                 or str(row["squawk"]) != str(prev["squawk"])
-                or str(row["icao_type"]) != str(prev["icao_type"])
             )
             if changed:
                 split_indices.append(idx)
@@ -212,18 +226,12 @@ def _build_edge_rows(
                 squawk=str(seg.iloc[-1]["squawk"]),
                 icao_type=str(seg.iloc[-1]["icao_type"]),
             )
-            distance_nm = 0.0
-            for i in range(1, len(seg)):
-                p1 = seg.iloc[i - 1]
-                p2 = seg.iloc[i]
-                distance_nm += great_circle_distance_nm(p1["lat"], p1["lon"], p2["lat"], p2["lon"])
-            straightness = straightness_ratio([(float(r["lat"]), float(r["lon"])) for _, r in seg.iterrows()])
             features = SegmentFeatures(
                 squawk=str(seg.iloc[-1]["squawk"]),
                 icao_type=str(seg.iloc[-1]["icao_type"]),
                 emitter_category=str(seg.iloc[-1]["emitter_category"]),
                 max_alt_qnh_ft=float(seg["alt_qnh_ft"].max()),
-                straightness=float(straightness),
+                straightness=0.0,
             )
             base_classification, vehicle_class = classify_segment(features, classifier_config)
             squawk = str(seg.iloc[-1]["squawk"])
@@ -247,7 +255,9 @@ def _build_edge_rows(
 
         status_by_segment: list[str] = ["unknown"] * len(segment_infos)
         current_status = "unknown"
-        if journey_all_controlled:
+        if journey_force_classification is not None:
+            status_by_segment = ["unknown"] * len(segment_infos)
+        elif journey_all_controlled:
             status_by_segment = ["ifr"] * len(segment_infos)
             current_status = "ifr"
         for idx, info in enumerate(segment_infos):
@@ -276,7 +286,11 @@ def _build_edge_rows(
         for info, persistent_status in zip(segment_infos, status_by_segment):
             seg = info["segment_df"]
             classification = str(info["base_classification"])
-            if classification != "heavy":
+            if journey_force_classification == "ifr":
+                classification = "ifr"
+            elif journey_force_classification == "vfr_type":
+                classification = "vfr_type"
+            else:
                 if persistent_status == "ifr":
                     classification = "ifr"
                 elif persistent_status == "vfr":

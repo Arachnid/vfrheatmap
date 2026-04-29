@@ -433,3 +433,94 @@ def test_journey_entirely_in_controlled_airspace_is_ifr() -> None:
     edges = segment_to_edges_batch(rows, classifier_config=cfg, airspace_lookup=airspace)
     assert len(edges) == 2
     assert set(edges["classification"].tolist()) == {"ifr"}
+
+
+def test_always_ifr_emitter_not_downgraded_by_vfr_evidence() -> None:
+    cfg = load_classifier_config(Path("config"))
+    base = datetime(2025, 1, 5, 10, 0, 0)
+    rows = pd.DataFrame(
+        [
+            {
+                "hex_id": "EMIT01",
+                "timestamp": base,
+                "lat": 51.0,
+                "lon": -1.0,
+                "alt_pressure_ft": 3000,
+                "alt_qnh_ft": 3000,
+                "ground_speed_kt": 140,
+                "track_deg": 100,
+                "squawk": "7000",
+                "icao_type": "A320",
+                "emitter_category": "A3",
+            },
+            {
+                "hex_id": "EMIT01",
+                "timestamp": base + timedelta(seconds=60),
+                "lat": 51.01,
+                "lon": -1.01,
+                "alt_pressure_ft": 3200,
+                "alt_qnh_ft": 3200,
+                "ground_speed_kt": 142,
+                "track_deg": 100,
+                "squawk": "7000",
+                "icao_type": "A320",
+                "emitter_category": "A3",
+            },
+        ]
+    )
+    edges = segment_to_edges_batch(rows, classifier_config=cfg)
+    assert len(edges) == 1
+    assert set(edges["classification"].tolist()) == {"ifr"}
+
+
+def test_always_vfr_type_not_upgraded_by_ifr_evidence() -> None:
+    cfg = load_classifier_config(Path("config"))
+    airspace = AirspaceLookup.from_feature_collection(
+        {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [[[-2.0, 50.0], [1.0, 50.0], [1.0, 53.0], [-2.0, 53.0], [-2.0, 50.0]]],
+                    },
+                    "properties": {"class": "A"},
+                }
+            ],
+        }
+    )
+    base = datetime(2025, 1, 5, 11, 0, 0)
+    rows = pd.DataFrame(
+        [
+            {
+                "hex_id": "TYPE01",
+                "timestamp": base,
+                "lat": 51.2,
+                "lon": -0.8,
+                "alt_pressure_ft": 2500,
+                "alt_qnh_ft": 2500,
+                "ground_speed_kt": 90,
+                "track_deg": 85,
+                "squawk": "2001",
+                "icao_type": "C42",
+                "emitter_category": "A1",
+            },
+            {
+                "hex_id": "TYPE01",
+                "timestamp": base + timedelta(seconds=60),
+                "lat": 51.22,
+                "lon": -0.78,
+                "alt_pressure_ft": 2600,
+                "alt_qnh_ft": 2600,
+                "ground_speed_kt": 92,
+                "track_deg": 85,
+                "squawk": "2001",
+                "icao_type": "C42",
+                "emitter_category": "A1",
+            },
+        ]
+    )
+    edges = segment_to_edges_batch(rows, classifier_config=cfg, airspace_lookup=airspace)
+    assert len(edges) == 1
+    assert set(edges["classification"].tolist()) == {"vfr_type"}
