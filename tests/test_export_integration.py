@@ -43,7 +43,6 @@ def _create_test_db(path: Path) -> None:
                   time_seconds DOUBLE,
                   sum_cos_track DOUBLE,
                   sum_sin_track DOUBLE,
-                  track_hist INTEGER[],
                   sum_speed DOUBLE,
                   sum_speed_sq DOUBLE,
                   point_count INTEGER
@@ -54,7 +53,7 @@ def _create_test_db(path: Path) -> None:
             conn.execute(
                 f"""
                 INSERT INTO aggregates_{classification}_res{res}
-                VALUES (?, 25, 'fixed_wing', 3, 120.0, 80.0, 40.0, list_value(1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1), 240.0, 480.0, 4)
+                VALUES (?, 25, 'fixed_wing', 3, 120.0, 80.0, 40.0, 240.0, 480.0, 4)
                 """,
                 [h3_cell],
             )

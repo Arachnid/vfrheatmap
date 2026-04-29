@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from typing import Iterable
 
 import h3
-import numpy as np
 
 
 EARTH_RADIUS_M = 6_371_000.0
@@ -74,12 +73,6 @@ def h3_cell(lat: float, lon: float, resolution: int) -> str:
 def heading_bin_index(track_deg: float) -> int:
     wrapped = track_deg % 360.0
     return int(wrapped // 22.5) % 16
-
-
-def weighted_track_hist(track_deg: float, weight: float) -> np.ndarray:
-    hist = np.zeros(16, dtype=np.float64)
-    hist[heading_bin_index(track_deg)] = weight
-    return hist
 
 
 def straightness_ratio(points: Iterable[tuple[float, float]]) -> float:

@@ -66,7 +66,7 @@ def test_end_to_end_pipeline(tmp_path: Path) -> None:
         trace1,
         [
             _make_payload("ABC123", base1, "7000", "C152", "A1", 1500, 1800),
-            _make_payload("DEF456", base1, "1200", "SR22", "A1", 16000, 16200),
+                _make_payload("DEF456", base1, "1200", "SR22", "A3", 16000, 16200),
         ],
     )
     era5 = tmp_path / "cache" / "era5" / "mslp_2025-01_test.nc"

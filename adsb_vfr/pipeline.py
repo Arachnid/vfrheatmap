@@ -11,18 +11,17 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import ray
-from ray.data.aggregate import AggregateFn, Count, CountDistinct, Sum
+from ray.data.aggregate import Count, CountDistinct, Sum
 
 from adsb_vfr.config import ClassifierConfig
 from adsb_vfr.lib.airspace_lookup import AirspaceLookup
 from adsb_vfr.lib.classifier import VFR_CLASSES, SegmentFeatures, classify_segment, is_always_ifr_emitter, is_always_vfr_type
 from adsb_vfr.lib.era5_lookup import Era5Lookup
-from adsb_vfr.lib.geo import densify_segment, great_circle_distance_nm, h3_cell, heading_bin_index, initial_bearing_deg
+from adsb_vfr.lib.geo import densify_segment, great_circle_distance_nm, h3_cell, initial_bearing_deg
 from adsb_vfr.lib.trace_format import iter_trace_tarball_points
 import h3
 
 LOGGER = logging.getLogger(__name__)
-TRACK_HIST_COLUMNS = [f"track_hist_{i}" for i in range(16)]
 
 
 @dataclass(frozen=True)
@@ -32,7 +31,7 @@ class IngestResult:
 
 
 def _base_unified_row(row_type: str) -> dict[str, Any]:
-    row: dict[str, Any] = {
+    return {
         "row_type": row_type,
         "classification_group": None,
         "resolution": None,
@@ -47,9 +46,6 @@ def _base_unified_row(row_type: str) -> dict[str, Any]:
         "agg_point_count": None,
         "vehicle_class": None,
     }
-    for col in TRACK_HIST_COLUMNS:
-        row[col] = None
-    return row
 
 
 def to_unified_aggregate_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -70,8 +66,6 @@ def to_unified_aggregate_row(row: dict[str, Any]) -> dict[str, Any]:
             "agg_point_count": int(row["point_count"]),
         }
     )
-    for col in TRACK_HIST_COLUMNS:
-        out[col] = float(row[col])
     return out
 
 
@@ -417,7 +411,6 @@ def add_aggregate_keys(row: dict[str, Any]) -> dict[str, Any]:
 def explode_resolutions(row: dict[str, Any]) -> list[dict[str, Any]]:
     track = float(row["track_deg"])
     weight = float(row["time_weight"])
-    track_bin = int(heading_bin_index(track))
     res9_idx = h3_cell(float(row["lat"]), float(row["lon"]), resolution=9)
     res9_cell = int(h3.str_to_int(res9_idx))
     out_rows: list[dict[str, Any]] = []
@@ -429,7 +422,6 @@ def explode_resolutions(row: dict[str, Any]) -> list[dict[str, Any]]:
         record = dict(row)
         record["resolution"] = resolution
         record["h3_cell"] = cell
-        record["track_bin"] = track_bin
         record["sum_cos_track"] = float(np.cos(np.deg2rad(track)) * weight)
         record["sum_sin_track"] = float(np.sin(np.deg2rad(track)) * weight)
         record["sum_speed"] = float(row["ground_speed_kt"]) * weight
@@ -437,21 +429,6 @@ def explode_resolutions(row: dict[str, Any]) -> list[dict[str, Any]]:
         record["point_weight"] = weight
         out_rows.append(record)
     return out_rows
-
-
-def track_bin_distinct_segments_agg(bin_idx: int) -> AggregateFn:
-    name = f"track_hist_{bin_idx}"
-    return AggregateFn(
-        init=lambda _k: [],
-        accumulate_row=lambda acc, row: (
-            acc
-            if int(row["track_bin"]) != bin_idx
-            else (acc.append(int(row["segment_id"])) or acc)
-        ),
-        merge=lambda left, right: left + right,
-        finalize=lambda acc: float(len(set(acc))),
-        name=name,
-    )
 
 
 def build_and_run_pipeline(
@@ -494,7 +471,6 @@ def build_and_run_pipeline(
         Sum("sum_speed_sq", alias_name="sum_speed_sq"),
         Count(alias_name="point_count"),
         CountDistinct("segment_id", alias_name="flight_count"),
-        *[track_bin_distinct_segments_agg(i) for i in range(16)],
     )
     unified_aggregates_ds = aggregates_ds.map(to_unified_aggregate_row)
     unified_aggregates_ds.write_parquet(str(pipeline_output_dir))

@@ -23,13 +23,8 @@ class FinaliseInput:
     ingest_result: IngestResult
 
 
-def _render_track_hist_expr(prefix: str = "track_hist_") -> str:
-    return "list_value(" + ",".join(f"CAST(round({prefix}{i}) AS INTEGER)" for i in range(16)) + ")"
-
-
 def _create_aggregate_table(conn: duckdb.DuckDBPyConnection, source_glob: str, group_name: str, resolution: int) -> None:
     table_name = f"aggregates_{group_name}_res{resolution}"
-    hist_expr = _render_track_hist_expr()
     conn.execute(
         f"""
         CREATE OR REPLACE TABLE {table_name} AS
@@ -41,7 +36,6 @@ def _create_aggregate_table(conn: duckdb.DuckDBPyConnection, source_glob: str, g
           CAST(time_seconds AS DOUBLE) AS time_seconds,
           CAST(sum_cos_track AS DOUBLE) AS sum_cos_track,
           CAST(sum_sin_track AS DOUBLE) AS sum_sin_track,
-          {hist_expr} AS track_hist,
           CAST(sum_speed AS DOUBLE) AS sum_speed,
           CAST(sum_speed_sq AS DOUBLE) AS sum_speed_sq,
           CAST(agg_point_count AS INTEGER) AS point_count
