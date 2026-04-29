@@ -18,7 +18,14 @@ from shapely.geometry import LineString, Polygon
 
 from adsb_vfr.config import ClassifierConfig
 from adsb_vfr.lib.airspace_lookup import AirspaceLookup
-from adsb_vfr.lib.classifier import VFR_CLASSES, SegmentFeatures, classify_segment, is_always_ifr_emitter, is_always_vfr_type
+from adsb_vfr.lib.classifier import (
+    VFR_CLASSES,
+    SegmentFeatures,
+    classify_segment,
+    is_always_ifr_emitter,
+    is_always_ifr_type,
+    is_always_vfr_type,
+)
 from adsb_vfr.lib.era5_lookup import Era5Lookup
 from adsb_vfr.lib.geo import great_circle_distance_nm, h3_cell, initial_bearing_deg
 from adsb_vfr.lib.trace_format import iter_trace_tarball_points
@@ -174,8 +181,8 @@ def _build_edge_rows(
         g["emitter_category"] = g["emitter_category"].replace("", pd.NA).ffill().bfill().fillna("")
         first_emitter = str(g.iloc[0]["emitter_category"])
         first_icao_type = str(g.iloc[0]["icao_type"])
-        journey_force_ifr = is_always_ifr_emitter(first_emitter)
-        journey_force_vfr = (not journey_force_ifr) and is_always_vfr_type(first_icao_type)
+        journey_force_ifr = is_always_ifr_emitter(first_emitter) or is_always_ifr_type(first_icao_type, classifier_config)
+        journey_force_vfr = (not journey_force_ifr) and is_always_vfr_type(first_icao_type, classifier_config)
         journey_force_classification: str | None = None
         if journey_force_ifr:
             journey_force_classification = "ifr"

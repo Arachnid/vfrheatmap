@@ -25,6 +25,7 @@ class ClassifierConfig:
     thresholds: ThresholdConfig
     listening_squawks: frozenset[str]
     known_vfr_only_types: frozenset[str]
+    known_ifr_only_types: frozenset[str]
     known_ifr_capable_types: frozenset[str]
     ifr_discrete_ranges: tuple[tuple[int, int], ...]
 
@@ -40,6 +41,7 @@ class ClassifierConfig:
             },
             "listening_squawks": sorted(self.listening_squawks),
             "known_vfr_only_types": sorted(self.known_vfr_only_types),
+            "known_ifr_only_types": sorted(self.known_ifr_only_types),
             "known_ifr_capable_types": sorted(self.known_ifr_capable_types),
             "ifr_discrete_ranges": [list(r) for r in self.ifr_discrete_ranges],
         }
@@ -55,6 +57,7 @@ def load_classifier_config(config_dir: Path) -> ClassifierConfig:
     defaults = _load_json(config_dir / "classifier_defaults.json")
     listening = _load_json(config_dir / "listening_squawks.json")
     vfr_types = _load_json(config_dir / "vfr_only_types.json")
+    ifr_only_types = _load_json(config_dir / "ifr_only_types.json")
     ifr_types = _load_json(config_dir / "ifr_capable_types.json")
     ifr_ranges = _load_json(config_dir / "ifr_discrete_ranges.json")
 
@@ -70,6 +73,7 @@ def load_classifier_config(config_dir: Path) -> ClassifierConfig:
         thresholds=thresholds,
         listening_squawks=frozenset(str(v) for v in listening),
         known_vfr_only_types=frozenset(str(v).upper() for v in vfr_types),
+        known_ifr_only_types=frozenset(str(v).upper() for v in ifr_only_types),
         known_ifr_capable_types=frozenset(str(v).upper() for v in ifr_types),
         ifr_discrete_ranges=tuple((int(r[0]), int(r[1])) for r in ifr_ranges),
     )
