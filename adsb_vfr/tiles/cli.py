@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import date
 from pathlib import Path
 
 import typer
@@ -22,6 +23,8 @@ def build_tiles_command(
     input_path: Path = typer.Option(Path("./output/aggregates.duckdb"), "--input", help="DuckDB file from ingest."),
     output_dir: Path = typer.Option(Path("./web/public/data"), "--output-dir", help="Output directory for static files."),
     bbox: str | None = typer.Option(None, "--bbox", help="MINLAT,MINLON,MAXLAT,MAXLON."),
+    start_date: str | None = typer.Option(None, "--start-date", help="Inclusive start date YYYY-MM-DD."),
+    end_date: str | None = typer.Option(None, "--end-date", help="Inclusive end date YYYY-MM-DD."),
     openaip_api_key: str | None = typer.Option(None, "--openaip-api-key", help="OpenAIP API key (or .openaip-api-key)."),
     openaip_key_file: Path | None = typer.Option(None, "--openaip-key-file", help="Optional OpenAIP API key file path."),
     cache_dir: Path = typer.Option(Path("./cache"), "--cache-dir"),
@@ -39,6 +42,8 @@ def build_tiles_command(
         input_path=input_path,
         output_dir=output_dir,
         bbox=parse_bbox(bbox),
+        start_date=date.fromisoformat(start_date) if start_date else None,
+        end_date=date.fromisoformat(end_date) if end_date else None,
         api_key=api_key,
         cache_dir=cache_dir,
         refresh_airspace=refresh_airspace,

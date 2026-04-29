@@ -1,4 +1,4 @@
 """Static tile export package."""
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 

@@ -23,12 +23,44 @@ class FinaliseInput:
     ingest_result: IngestResult
 
 
-def _create_aggregate_table(conn: duckdb.DuckDBPyConnection, source_glob: str, group_name: str, resolution: int) -> None:
-    table_name = f"aggregates_{group_name}_res{resolution}"
+def _ensure_aggregate_table(conn: duckdb.DuckDBPyConnection, group_name: str) -> None:
+    table_name = f"aggregates_{group_name}"
     conn.execute(
         f"""
-        CREATE OR REPLACE TABLE {table_name} AS
+        CREATE TABLE IF NOT EXISTS {table_name} (
+          agg_date DATE,
+          h3_cell UBIGINT,
+          alt_bin SMALLINT,
+          vehicle_class VARCHAR,
+          flight_count INTEGER,
+          time_seconds DOUBLE,
+          sum_cos_track DOUBLE,
+          sum_sin_track DOUBLE,
+          sum_speed DOUBLE,
+          sum_speed_sq DOUBLE,
+          point_count INTEGER
+        )
+        """
+    )
+
+
+def _replace_aggregate_days(
+    conn: duckdb.DuckDBPyConnection,
+    source_glob: str,
+    group_name: str,
+    start_date: date,
+    end_date: date,
+) -> None:
+    table_name = f"aggregates_{group_name}"
+    conn.execute(
+        f"DELETE FROM {table_name} WHERE agg_date BETWEEN ? AND ?",
+        [start_date, end_date],
+    )
+    conn.execute(
+        f"""
+        INSERT INTO {table_name}
         SELECT
+          CAST(agg_date AS DATE) AS agg_date,
           CAST(h3_cell AS UBIGINT) AS h3_cell,
           CAST(alt_bin AS SMALLINT) AS alt_bin,
           CAST(vehicle_class AS VARCHAR) AS vehicle_class,
@@ -40,9 +72,11 @@ def _create_aggregate_table(conn: duckdb.DuckDBPyConnection, source_glob: str, g
           CAST(sum_speed_sq AS DOUBLE) AS sum_speed_sq,
           CAST(agg_point_count AS INTEGER) AS point_count
         FROM read_parquet(?, union_by_name=true)
-        WHERE row_type = 'aggregate' AND classification_group = ? AND resolution = ?
+        WHERE row_type = 'aggregate'
+          AND classification_group = ?
+          AND CAST(agg_date AS DATE) BETWEEN ? AND ?
         """,
-        [source_glob, group_name, resolution],
+        [source_glob, group_name, start_date, end_date],
     )
 
 
@@ -56,16 +90,18 @@ def _write_ingest_run(conn: duckdb.DuckDBPyConnection, payload: FinaliseInput) -
           start_date DATE,
           end_date DATE,
           bbox VARCHAR,
-          classifier_config_hash VARCHAR
+          classifier_config_hash VARCHAR,
+          unknown_traces_dropped INTEGER
         )
         """
     )
+    conn.execute("ALTER TABLE ingest_runs ADD COLUMN IF NOT EXISTS unknown_traces_dropped INTEGER")
     next_run_id = conn.execute("SELECT COALESCE(MAX(run_id), 0) + 1 FROM ingest_runs").fetchone()[0]
     conn.execute(
         """
         INSERT INTO ingest_runs (
-          run_id, started_at, finished_at, start_date, end_date, bbox, classifier_config_hash
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+          run_id, started_at, finished_at, start_date, end_date, bbox, classifier_config_hash, unknown_traces_dropped
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [
             int(next_run_id),
@@ -75,6 +111,7 @@ def _write_ingest_run(conn: duckdb.DuckDBPyConnection, payload: FinaliseInput) -
             payload.end_date,
             ",".join(str(v) for v in payload.bbox),
             payload.classifier_config.config_hash,
+            payload.ingest_result.unknown_traces_dropped,
         ],
     )
 
@@ -84,9 +121,15 @@ def finalise_to_duckdb(payload: FinaliseInput) -> None:
     conn = duckdb.connect(str(payload.output_path))
     source_glob = str(payload.ingest_result.pipeline_output_dir / "*.parquet")
 
-    for group in ("vfr", "ifr", "unknown"):
-        for res in (9, 8, 7, 6):
-            _create_aggregate_table(conn=conn, source_glob=source_glob, group_name=group, resolution=res)
+    for group in ("vfr", "ifr", "helicopter"):
+        _ensure_aggregate_table(conn=conn, group_name=group)
+        _replace_aggregate_days(
+            conn=conn,
+            source_glob=source_glob,
+            group_name=group,
+            start_date=payload.start_date,
+            end_date=payload.end_date,
+        )
 
     _write_ingest_run(conn=conn, payload=payload)
     conn.close()

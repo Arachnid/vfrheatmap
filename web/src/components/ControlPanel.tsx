@@ -1,16 +1,17 @@
+import { binIndexToMaxFtInclusive, binIndexToMinFt, MAX_ALTITUDE_BIN_INDEX } from "../lib/altitudeBins";
 import type { Metric } from "../types";
 
 interface Props {
   showVfr: boolean;
   showIfr: boolean;
-  showUnknown: boolean;
+  showHelicopter: boolean;
   metric: Metric;
   minBin: number;
   maxBin: number;
   showAirspace: boolean;
   onToggleVfr: () => void;
   onToggleIfr: () => void;
-  onToggleUnknown: () => void;
+  onToggleHelicopter: () => void;
   onMetricChange: (next: Metric) => void;
   onMinBinChange: (value: number) => void;
   onMaxBinChange: (value: number) => void;
@@ -31,8 +32,8 @@ export function ControlPanel(props: Props) {
           IFR
         </label>
         <label className="flex items-center gap-2">
-          <input type="checkbox" checked={props.showUnknown} onChange={props.onToggleUnknown} />
-          Unknown
+          <input type="checkbox" checked={props.showHelicopter} onChange={props.onToggleHelicopter} />
+          Helicopter
         </label>
       </div>
 
@@ -50,7 +51,7 @@ export function ControlPanel(props: Props) {
       <input
         type="range"
         min={0}
-        max={120}
+        max={MAX_ALTITUDE_BIN_INDEX}
         value={props.minBin}
         onChange={(event) => props.onMinBinChange(Number(event.target.value))}
         className="w-full"
@@ -59,12 +60,14 @@ export function ControlPanel(props: Props) {
       <input
         type="range"
         min={0}
-        max={120}
+        max={MAX_ALTITUDE_BIN_INDEX}
         value={props.maxBin}
         onChange={(event) => props.onMaxBinChange(Number(event.target.value))}
         className="w-full"
       />
-      <div className="text-xs text-slate-600">{props.minBin * 100} - {props.maxBin * 100} ft</div>
+      <div className="text-xs text-slate-600">
+        {binIndexToMinFt(props.minBin)} – {binIndexToMaxFtInclusive(props.maxBin)} ft
+      </div>
 
       <div className="mt-3 flex items-center gap-2 text-xs">
         <input id="airspace" type="checkbox" checked={props.showAirspace} onChange={props.onToggleAirspace} />

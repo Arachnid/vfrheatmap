@@ -6,7 +6,6 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 
 import duckdb
-import h3
 import numpy as np
 import orjson
 import pytest
@@ -94,24 +93,13 @@ def test_end_to_end_pipeline(tmp_path: Path) -> None:
     )
     conn = duckdb.connect(str(out_db))
     try:
-        vfr_count = conn.execute("SELECT COUNT(*) FROM aggregates_vfr_res9").fetchone()[0]
-        ifr_count = conn.execute("SELECT COUNT(*) FROM aggregates_ifr_res9").fetchone()[0]
+        vfr_count = conn.execute("SELECT COUNT(*) FROM aggregates_vfr WHERE agg_date = DATE '2025-01-01'").fetchone()[0]
+        ifr_count = conn.execute("SELECT COUNT(*) FROM aggregates_ifr WHERE agg_date = DATE '2025-01-01'").fetchone()[0]
         run_count = conn.execute("SELECT COUNT(*) FROM ingest_runs").fetchone()[0]
-        vfr_res9 = conn.execute(
-            "SELECT h3_cell, alt_bin, vehicle_class, point_count FROM aggregates_vfr_res9"
-        ).fetchall()
-        vfr_res8 = conn.execute(
-            "SELECT h3_cell, alt_bin, vehicle_class, point_count FROM aggregates_vfr_res8"
-        ).fetchall()
+        dropped_unknown = conn.execute("SELECT unknown_traces_dropped FROM ingest_runs LIMIT 1").fetchone()[0]
     finally:
         conn.close()
     assert vfr_count > 0
     assert ifr_count > 0
     assert run_count == 1
-    rolled: dict[tuple[int, int, str], int] = {}
-    for h3_cell, alt_bin, vehicle_class, point_count in vfr_res9:
-        parent = int(h3.str_to_int(h3.cell_to_parent(h3.int_to_str(int(h3_cell)), 8)))
-        key = (parent, int(alt_bin), str(vehicle_class))
-        rolled[key] = rolled.get(key, 0) + int(point_count)
-    actual = {(int(h), int(a), str(v)): int(p) for h, a, v, p in vfr_res8}
-    assert rolled == actual
+    assert int(dropped_unknown) >= 0

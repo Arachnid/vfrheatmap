@@ -73,6 +73,8 @@ Options:
 - `--input PATH`
 - `--output-dir PATH`
 - `--bbox MINLAT,MINLON,MAXLAT,MAXLON` (defaults from latest `ingest_runs`)
+- `--start-date YYYY-MM-DD` (optional; defaults from latest `ingest_runs`)
+- `--end-date YYYY-MM-DD` (optional; defaults from latest `ingest_runs`)
 - `--openaip-api-key KEY`
 - `--openaip-key-file PATH`
 - `--cache-dir PATH` (`cache/openaip` used internally)
@@ -81,7 +83,7 @@ Options:
 
 Output layout:
 - `manifest.json`
-- `tiles/{vfr|ifr|unknown}/z{z}/x{x}/y{y}.json.gz`
+- `tiles/{vfr|ifr|helicopter}/z{z}/x{x}/y{y}.json.gz`
 - `airspace/uk.geojson.gz`
 - `airspace/style.json`
 
@@ -125,7 +127,7 @@ Optional repo variable:
 
 ## Methodology Notes and Caveats
 
-- VFR/IFR/unknown groups come from the rule-based segment classifier in the ingest pipeline.
+- VFR/IFR groups come from the rule-based segment classifier in the ingest pipeline.
 - Altitudes are pressure-corrected with ERA5 MSLP as a QNH proxy.
 - Coherence is derived from normalized directional vectors (`sum_cos_track`, `sum_sin_track`).
 - Low-coherence cells intentionally suppress directional arrows.

@@ -13,7 +13,7 @@ import { tilesForViewport, type TileKey } from "./tiles/tileMath";
 import type { Classification, Manifest, Metric, TileCell } from "./types";
 
 const tileManager = new TileManager();
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 const HEATMAP_GLOBAL_SATURATION_FRACTION = 0.99;
 const H3_RESOLUTION_SCALE_FACTOR = 6;
 const AIRSPACE_TILE_TEMPLATE = "./data/airspace/tiles/z{z}/x{x}/y{y}.png";
@@ -58,10 +58,10 @@ export default function App() {
   const [cells, setCells] = useState<TileCell[]>([]);
   const [showVfr, setShowVfr] = useState(true);
   const [showIfr, setShowIfr] = useState(false);
-  const [showUnknown, setShowUnknown] = useState(false);
+  const [showHelicopter, setShowHelicopter] = useState(false);
   const [metric, setMetric] = useState<Metric>("flight_count");
   const [minBin, setMinBin] = useState(0);
-  const [maxBin, setMaxBin] = useState(60);
+  const [maxBin, setMaxBin] = useState(54);
   const [showAirspace, setShowAirspace] = useState(true);
   const [visibleTiles, setVisibleTiles] = useState<TileKey[]>([]);
 
@@ -73,11 +73,11 @@ export default function App() {
     if (showIfr) {
       values.push("ifr");
     }
-    if (showUnknown) {
-      values.push("unknown");
+    if (showHelicopter) {
+      values.push("helicopter");
     }
     return values;
-  }, [showVfr, showIfr, showUnknown]);
+  }, [showVfr, showIfr, showHelicopter]);
 
   useEffect(() => {
     selectedClassificationsRef.current = selectedClassifications;
@@ -337,14 +337,14 @@ export default function App() {
       <ControlPanel
         showVfr={showVfr}
         showIfr={showIfr}
-        showUnknown={showUnknown}
+        showHelicopter={showHelicopter}
         metric={metric}
         minBin={minBin}
         maxBin={maxBin}
         showAirspace={showAirspace}
         onToggleVfr={() => setShowVfr((prev) => !prev)}
         onToggleIfr={() => setShowIfr((prev) => !prev)}
-        onToggleUnknown={() => setShowUnknown((prev) => !prev)}
+        onToggleHelicopter={() => setShowHelicopter((prev) => !prev)}
         onMetricChange={setMetric}
         onMinBinChange={setMinBin}
         onMaxBinChange={setMaxBin}

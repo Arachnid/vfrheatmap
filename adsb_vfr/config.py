@@ -27,6 +27,9 @@ class ClassifierConfig:
     known_vfr_only_types: frozenset[str]
     known_ifr_only_types: frozenset[str]
     known_ifr_capable_types: frozenset[str]
+    helicopter_types: frozenset[str]
+    tiltrotor_types: frozenset[str]
+    gyrocopter_types: frozenset[str]
     ifr_discrete_ranges: tuple[tuple[int, int], ...]
 
     @property
@@ -43,6 +46,9 @@ class ClassifierConfig:
             "known_vfr_only_types": sorted(self.known_vfr_only_types),
             "known_ifr_only_types": sorted(self.known_ifr_only_types),
             "known_ifr_capable_types": sorted(self.known_ifr_capable_types),
+            "helicopter_types": sorted(self.helicopter_types),
+            "tiltrotor_types": sorted(self.tiltrotor_types),
+            "gyrocopter_types": sorted(self.gyrocopter_types),
             "ifr_discrete_ranges": [list(r) for r in self.ifr_discrete_ranges],
         }
         return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
@@ -60,6 +66,9 @@ def load_classifier_config(config_dir: Path) -> ClassifierConfig:
     ifr_only_types = _load_json(config_dir / "ifr_only_types.json")
     ifr_types = _load_json(config_dir / "ifr_capable_types.json")
     ifr_ranges = _load_json(config_dir / "ifr_discrete_ranges.json")
+    helicopter_types = _load_json(config_dir / "helicopter_types.json")
+    tiltrotor_types = _load_json(config_dir / "tiltrotor_types.json")
+    gyrocopter_types = _load_json(config_dir / "gyrocopter_types.json")
 
     thresholds = ThresholdConfig(
         gap_seconds=int(defaults.get("gap_seconds", DEFAULT_GAP_SECONDS)),
@@ -75,6 +84,9 @@ def load_classifier_config(config_dir: Path) -> ClassifierConfig:
         known_vfr_only_types=frozenset(str(v).upper() for v in vfr_types),
         known_ifr_only_types=frozenset(str(v).upper() for v in ifr_only_types),
         known_ifr_capable_types=frozenset(str(v).upper() for v in ifr_types),
+        helicopter_types=frozenset(str(v).upper() for v in helicopter_types),
+        tiltrotor_types=frozenset(str(v).upper() for v in tiltrotor_types),
+        gyrocopter_types=frozenset(str(v).upper() for v in gyrocopter_types),
         ifr_discrete_ranges=tuple((int(r[0]), int(r[1])) for r in ifr_ranges),
     )
 

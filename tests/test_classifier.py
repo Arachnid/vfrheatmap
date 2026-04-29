@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from adsb_vfr.config import load_classifier_config
-from adsb_vfr.lib.classifier import SegmentFeatures, classify_segment
+from adsb_vfr.lib.classifier import SegmentFeatures, classify_segment, infer_vehicle_class
 
 
 def _cfg():
@@ -34,3 +34,23 @@ def test_unknown_falls_through_to_segment_logic() -> None:
         _cfg(),
     )
     assert label == "unknown"
+
+
+def test_infer_vehicle_class_listed_helicopter() -> None:
+    assert infer_vehicle_class("R44", _cfg()) == "helicopter"
+
+
+def test_infer_vehicle_class_gyrocopter() -> None:
+    assert infer_vehicle_class("MTO3", _cfg()) == "gyrocopter"
+
+
+def test_infer_vehicle_class_doc8643_h_prefix() -> None:
+    assert infer_vehicle_class("HXYZ", _cfg()) == "helicopter"
+
+
+def test_infer_vehicle_class_doc8643_t_prefix_tiltrotor() -> None:
+    assert infer_vehicle_class("TFOO", _cfg()) == "helicopter"
+
+
+def test_infer_vehicle_class_brantly_b2_type_field() -> None:
+    assert infer_vehicle_class("B2", _cfg()) == "helicopter"

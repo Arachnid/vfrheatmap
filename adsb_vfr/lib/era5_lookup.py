@@ -8,6 +8,8 @@ from typing import Sequence
 import numpy as np
 import xarray as xr
 
+from adsb_vfr.lib.altitude_bins import TRANSITION_ALTITUDE_FT
+
 
 @dataclass
 class Era5Lookup:
@@ -50,6 +52,8 @@ class Era5Lookup:
         lons: np.ndarray,
         timestamps: np.ndarray,
     ) -> np.ndarray:
+        """MSLP-corrected altitude below transition; pressure altitude (1013.25 hPa) at/above."""
         mslp_hpa = self.lookup_hpa(lats=lats, lons=lons, timestamps=timestamps)
-        return self.pressure_to_qnh_alt_ft(pressure_alt_ft=pressure_alt_ft, mslp_hpa=mslp_hpa)
+        qnh_alt = self.pressure_to_qnh_alt_ft(pressure_alt_ft=pressure_alt_ft, mslp_hpa=mslp_hpa)
+        return np.where(pressure_alt_ft >= TRANSITION_ALTITUDE_FT, pressure_alt_ft, qnh_alt)
 

@@ -1,4 +1,4 @@
-export type Classification = "vfr" | "ifr" | "unknown";
+export type Classification = "vfr" | "ifr" | "helicopter";
 export type Metric = "flight_count" | "time_seconds";
 
 export interface AltBinValue {

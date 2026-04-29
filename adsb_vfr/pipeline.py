@@ -26,6 +26,7 @@ from adsb_vfr.lib.classifier import (
     is_always_ifr_type,
     is_always_vfr_type,
 )
+from adsb_vfr.lib.altitude_bins import altitude_ft_to_bin
 from adsb_vfr.lib.era5_lookup import Era5Lookup
 from adsb_vfr.lib.geo import great_circle_distance_nm, h3_cell, initial_bearing_deg
 from adsb_vfr.lib.trace_format import iter_trace_tarball_points
@@ -33,17 +34,54 @@ from adsb_vfr.lib.trace_format import iter_trace_tarball_points
 LOGGER = logging.getLogger(__name__)
 
 
+@ray.remote
+class _UnknownSegmentAccumulator:
+    """Merges unknown segment_id values from all map_batches workers (distinct globally)."""
+
+    def __init__(self) -> None:
+        self._ids: set[int] = set()
+
+    def add(self, segment_ids: list[int]) -> None:
+        self._ids.update(int(x) for x in segment_ids)
+
+    def distinct_count(self) -> int:
+        return len(self._ids)
+
+
+def _segment_to_edges_batch_count_unknown(
+    batch: pd.DataFrame,
+    classifier_config: ClassifierConfig,
+    airspace_ref: ray.ObjectRef | None = None,
+    airspace_lookup: AirspaceLookup | None = None,
+    unknown_accumulator: Any = None,
+) -> pd.DataFrame:
+    out = segment_to_edges_batch(
+        batch=batch,
+        classifier_config=classifier_config,
+        airspace_ref=airspace_ref,
+        airspace_lookup=airspace_lookup,
+    )
+    if unknown_accumulator is not None and not out.empty and "classification" in out.columns and "segment_id" in out.columns:
+        mask = out["classification"].astype(str) == "unknown"
+        if bool(mask.any()):
+            ids = out.loc[mask, "segment_id"].drop_duplicates().astype(int).tolist()
+            if ids:
+                ray.get(unknown_accumulator.add.remote(ids))
+    return out
+
+
 @dataclass(frozen=True)
 class IngestResult:
     temp_dir: Path
     pipeline_output_dir: Path
+    unknown_traces_dropped: int
 
 
 def _base_unified_row(row_type: str) -> dict[str, Any]:
     return {
         "row_type": row_type,
+        "agg_date": None,
         "classification_group": None,
-        "resolution": None,
         "h3_cell": None,
         "alt_bin": None,
         "flight_count": None,
@@ -61,8 +99,8 @@ def to_unified_aggregate_row(row: dict[str, Any]) -> dict[str, Any]:
     out = _base_unified_row("aggregate")
     out.update(
         {
+            "agg_date": str(row["agg_date"]),
             "classification_group": str(row["classification_group"]),
-            "resolution": int(row["resolution"]),
             "h3_cell": int(row["h3_cell"]),
             "alt_bin": int(row["alt_bin"]),
             "vehicle_class": str(row["vehicle_class"]),
@@ -127,6 +165,7 @@ def parse_correct_flatmap(
         for row, corrected in zip(chunk, alt_qnh):
             out_rows.append(
                 {
+                    "trace_date": str(item["date"]),
                     "hex_id": row["hex_id"],
                     "timestamp": row["timestamp"],
                     "lat": row["lat"],
@@ -335,6 +374,7 @@ def _build_edge_rows(
                         "hex_id": hex_id,
                         "classification": classification,
                         "vehicle_class": str(info["vehicle_class"]),
+                        "agg_date": str(p1["timestamp"].date()),
                         "start_ts": p1["timestamp"],
                         "end_ts": p2["timestamp"],
                         "start_lat": float(p1["lat"]),
@@ -474,6 +514,7 @@ def edge_to_cell_intersections(edge: dict[str, Any]) -> list[dict[str, Any]]:
         out.append(
             {
                 "segment_id": int(edge["segment_id"]),
+                "agg_date": str(edge["agg_date"]),
                 "classification": str(edge["classification"]),
                 "vehicle_class": str(edge["vehicle_class"]),
                 "lat": lat_mid,
@@ -492,44 +533,31 @@ def add_aggregate_keys(row: dict[str, Any]) -> dict[str, Any]:
     classification = str(row["classification"])
     vehicle_class = str(row["vehicle_class"])
     group: str | None
-    if classification in VFR_CLASSES or vehicle_class == "helicopter":
+    if vehicle_class == "helicopter":
+        group = "helicopter"
+    elif vehicle_class == "gyrocopter":
         group = "vfr"
     elif classification == "ifr":
         group = "ifr"
-    elif classification == "unknown":
-        group = "unknown"
+    elif classification in VFR_CLASSES:
+        group = "vfr"
     else:
         group = None
     if group is None:
         row["classification_group"] = None
         return row
-    alt_bin = int(np.clip(np.floor(float(row["alt_qnh_ft"]) / 100.0), 0, 119))
+    alt_bin = altitude_ft_to_bin(float(row["alt_qnh_ft"]))
     row["classification_group"] = group
     row["alt_bin"] = alt_bin
-    return row
-
-
-def explode_resolutions(row: dict[str, Any]) -> list[dict[str, Any]]:
+    row["h3_cell"] = int(h3.str_to_int(str(row["res9_idx"])))
     track = float(row["track_deg"])
     weight = float(row["time_weight"])
-    res9_idx = str(row.get("res9_idx") or h3_cell(float(row["lat"]), float(row["lon"]), resolution=9))
-    res9_cell = int(h3.str_to_int(res9_idx))
-    out_rows: list[dict[str, Any]] = []
-    for resolution in (9, 8, 7, 6):
-        cell = res9_cell
-        if resolution != 9:
-            parent = h3.cell_to_parent(res9_idx, resolution)
-            cell = int(h3.str_to_int(parent))
-        record = dict(row)
-        record["resolution"] = resolution
-        record["h3_cell"] = cell
-        record["sum_cos_track"] = float(np.cos(np.deg2rad(track)) * weight)
-        record["sum_sin_track"] = float(np.sin(np.deg2rad(track)) * weight)
-        record["sum_speed"] = float(row["ground_speed_kt"]) * weight
-        record["sum_speed_sq"] = float(row["ground_speed_kt"] ** 2) * weight
-        record["point_weight"] = weight
-        out_rows.append(record)
-    return out_rows
+    row["sum_cos_track"] = float(np.cos(np.deg2rad(track)) * weight)
+    row["sum_sin_track"] = float(np.sin(np.deg2rad(track)) * weight)
+    row["sum_speed"] = float(row["ground_speed_kt"]) * weight
+    row["sum_speed_sq"] = float(row["ground_speed_kt"] ** 2) * weight
+    row["point_weight"] = weight
+    return row
 
 
 def build_and_run_pipeline(
@@ -554,17 +582,20 @@ def build_and_run_pipeline(
     partition_count = max(16, min(256, available_cpus * 8))
     points_ds = points_ds.repartition(num_blocks=partition_count, shuffle=True, keys=["hex_id"])
 
+    unknown_accumulator = _UnknownSegmentAccumulator.remote()
     edges_ds = points_ds.map_batches(
-        segment_to_edges_batch,
+        _segment_to_edges_batch_count_unknown,
         batch_format="pandas",
-        fn_kwargs={"classifier_config": classifier_config, "airspace_ref": airspace_ref},
+        fn_kwargs={
+            "classifier_config": classifier_config,
+            "airspace_ref": airspace_ref,
+            "unknown_accumulator": unknown_accumulator,
+        },
     )
     intersections_ds = edges_ds.flat_map(edge_to_cell_intersections)
     keyed_ds = intersections_ds.map(add_aggregate_keys).filter(lambda r: r.get("classification_group") is not None)
-    exploded_ds = keyed_ds.flat_map(explode_resolutions)
-
-    group_keys = ["classification_group", "resolution", "h3_cell", "alt_bin", "vehicle_class"]
-    aggregates_ds = exploded_ds.groupby(group_keys).aggregate(
+    group_keys = ["agg_date", "classification_group", "h3_cell", "alt_bin", "vehicle_class"]
+    aggregates_ds = keyed_ds.groupby(group_keys).aggregate(
         Sum("point_weight", alias_name="time_seconds"),
         Sum("sum_cos_track", alias_name="sum_cos_track"),
         Sum("sum_sin_track", alias_name="sum_sin_track"),
@@ -575,9 +606,12 @@ def build_and_run_pipeline(
     )
     unified_aggregates_ds = aggregates_ds.map(to_unified_aggregate_row)
     unified_aggregates_ds.write_parquet(str(pipeline_output_dir))
+    unknown_traces_dropped = int(ray.get(unknown_accumulator.distinct_count.remote()))
+    LOGGER.info("Unknown segments not mapped to vfr/ifr/helicopter layers: %s (distinct segment_id)", unknown_traces_dropped)
     return IngestResult(
         temp_dir=temp_dir,
         pipeline_output_dir=pipeline_output_dir,
+        unknown_traces_dropped=unknown_traces_dropped,
     )
 
 
