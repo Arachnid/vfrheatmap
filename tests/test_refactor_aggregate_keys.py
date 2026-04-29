@@ -1,4 +1,4 @@
-"""Regression tests for ingest: mixed altitude bins, unknown exclusion, agg_date propagation."""
+"""Regression tests for ingest: unknown exclusion, agg_date propagation."""
 
 from __future__ import annotations
 
@@ -33,30 +33,21 @@ def test_edge_to_cell_intersections_propagates_agg_date() -> None:
         assert row["agg_date"] == "2025-06-15"
 
 
-def test_add_aggregate_keys_uses_mixed_altitude_bins() -> None:
+def test_add_aggregate_keys_sets_h3_and_classification_group() -> None:
     cell = h3.latlng_to_cell(51.0, -1.0, 9)
-    base = {
-        "classification": "vfr_medium",
-        "vehicle_class": "fixed_wing",
-        "alt_qnh_ft": 50.0,
-        "track_deg": 0.0,
-        "ground_speed_kt": 80.0,
-        "time_weight": 1.0,
-        "res9_idx": cell,
-    }
-    assert add_aggregate_keys(dict(base))["alt_bin"] == 0
-    base["alt_qnh_ft"] = 150.0
-    assert add_aggregate_keys(dict(base))["alt_bin"] == 1
-    base["alt_qnh_ft"] = 250.0
-    assert add_aggregate_keys(dict(base))["alt_bin"] == 2
-    base["alt_qnh_ft"] = 2999.0
-    assert add_aggregate_keys(dict(base))["alt_bin"] == 29
-    base["alt_qnh_ft"] = 3000.0
-    assert add_aggregate_keys(dict(base))["alt_bin"] == 30
-    base["alt_qnh_ft"] = 3500.0
-    assert add_aggregate_keys(dict(base))["alt_bin"] == 31
-    base["alt_qnh_ft"] = 5000.0
-    assert add_aggregate_keys(dict(base))["alt_bin"] == 34
+    out = add_aggregate_keys(
+        {
+            "classification": "vfr_medium",
+            "vehicle_class": "fixed_wing",
+            "alt_qnh_ft": 5000.0,
+            "track_deg": 0.0,
+            "ground_speed_kt": 80.0,
+            "time_weight": 1.0,
+            "res9_idx": cell,
+        }
+    )
+    assert out["classification_group"] == "vfr"
+    assert out["h3_cell"] == int(h3.str_to_int(cell))
 
 
 def test_add_aggregate_keys_unknown_not_grouped() -> None:

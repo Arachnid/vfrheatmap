@@ -1,12 +1,6 @@
 export type Classification = "vfr" | "ifr" | "helicopter";
 export type Metric = "flight_count" | "time_seconds";
 
-export interface AltBinValue {
-  bin_index: number;
-  time_seconds: number;
-  flight_count: number;
-}
-
 export interface TileCell {
   h3: string;
   flight_count: number;
@@ -15,7 +9,6 @@ export interface TileCell {
   mean_track_y: number;
   coherence: number;
   mean_speed: number;
-  alt_bins: AltBinValue[];
 }
 
 export interface TilePayload {
@@ -33,7 +26,6 @@ export interface Manifest {
   date_range: { start: string; end: string };
   classifier_config_hash: string;
   h3_resolutions: number[];
-  altitude_bins: number[];
   classifications: Classification[];
   classification_scales?: Record<
     Classification,
@@ -55,6 +47,4 @@ export interface Manifest {
 
 export interface RenderableCell extends TileCell {
   metricValue: number;
-  selectedFlightCount: number;
-  selectedTimeSeconds: number;
 }

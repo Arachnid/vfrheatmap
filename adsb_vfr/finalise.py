@@ -30,7 +30,6 @@ def _ensure_aggregate_table(conn: duckdb.DuckDBPyConnection, group_name: str) ->
         CREATE TABLE IF NOT EXISTS {table_name} (
           agg_date DATE,
           h3_cell UBIGINT,
-          alt_bin SMALLINT,
           vehicle_class VARCHAR,
           flight_count INTEGER,
           time_seconds DOUBLE,
@@ -62,7 +61,6 @@ def _replace_aggregate_days(
         SELECT
           CAST(agg_date AS DATE) AS agg_date,
           CAST(h3_cell AS UBIGINT) AS h3_cell,
-          CAST(alt_bin AS SMALLINT) AS alt_bin,
           CAST(vehicle_class AS VARCHAR) AS vehicle_class,
           CAST(flight_count AS INTEGER) AS flight_count,
           CAST(time_seconds AS DOUBLE) AS time_seconds,

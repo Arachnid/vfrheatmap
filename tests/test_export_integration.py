@@ -38,7 +38,6 @@ def _create_test_db(path: Path) -> None:
             CREATE TABLE aggregates_{classification} (
               agg_date DATE,
               h3_cell UBIGINT,
-              alt_bin SMALLINT,
               vehicle_class VARCHAR,
               flight_count INTEGER,
               time_seconds DOUBLE,
@@ -58,7 +57,7 @@ def _create_test_db(path: Path) -> None:
         conn.execute(
             f"""
             INSERT INTO aggregates_{classification}
-            VALUES (DATE '2026-03-01', ?, 25, ?, 3, 120.0, 80.0, 40.0, 240.0, 480.0, 4)
+            VALUES (DATE '2026-03-01', ?, ?, 3, 120.0, 80.0, 40.0, 240.0, 480.0, 4)
             """,
             [h3_cell, vehicle],
         )
@@ -92,7 +91,6 @@ def _create_test_db_multi_day(path: Path) -> None:
             CREATE TABLE aggregates_{classification} (
               agg_date DATE,
               h3_cell UBIGINT,
-              alt_bin SMALLINT,
               vehicle_class VARCHAR,
               flight_count INTEGER,
               time_seconds DOUBLE,
@@ -112,8 +110,8 @@ def _create_test_db_multi_day(path: Path) -> None:
         conn.execute(
             f"""
             INSERT INTO aggregates_{classification} VALUES
-            (DATE '2026-03-01', ?, 10, ?, 1, 40.0, 10.0, 5.0, 80.0, 6400.0, 2),
-            (DATE '2026-03-03', ?, 11, ?, 2, 80.0, 20.0, 10.0, 160.0, 25600.0, 4)
+            (DATE '2026-03-01', ?, ?, 1, 40.0, 10.0, 5.0, 80.0, 6400.0, 2),
+            (DATE '2026-03-03', ?, ?, 2, 80.0, 20.0, 10.0, 160.0, 25600.0, 4)
             """,
             [h3_cell, vehicle, h3_cell, vehicle],
         )
@@ -148,7 +146,7 @@ def test_build_tiles_writes_manifest_and_tile(tmp_path: Path, monkeypatch) -> No
     )
 
     manifest = json.loads((out_dir / "manifest.json").read_text(encoding="utf-8"))
-    assert manifest["schema_version"] == 2
+    assert manifest["schema_version"] == 3
     assert manifest["classifier_config_hash"] == "abc123"
     assert manifest["date_range"]["start"] == "2026-03-01"
     assert manifest["classifications"] == ["vfr", "ifr", "helicopter"]

@@ -1,30 +1,11 @@
 import type { Metric, RenderableCell, TileCell } from "../types";
 
-export function filterCellsByAltitude(
-  cells: TileCell[],
-  minBin: number,
-  maxBin: number,
-  metric: Metric
-): RenderableCell[] {
+/** Project tile cells to the chosen metric for heatmap colouring (no altitude breakdown). */
+export function cellsWithMetric(cells: TileCell[], metric: Metric): RenderableCell[] {
   return cells
-    .map((cell) => {
-      let selectedTimeSeconds = 0;
-      let selectedFlightCount = 0;
-      for (const bin of cell.alt_bins) {
-        if (bin.bin_index >= minBin && bin.bin_index <= maxBin) {
-          selectedTimeSeconds += bin.time_seconds;
-          selectedFlightCount += bin.flight_count;
-        }
-      }
-      if (selectedTimeSeconds <= 0 && selectedFlightCount <= 0) {
-        return null;
-      }
-      return {
-        ...cell,
-        selectedTimeSeconds,
-        selectedFlightCount,
-        metricValue: metric === "flight_count" ? selectedFlightCount : selectedTimeSeconds,
-      };
-    })
-    .filter((value): value is RenderableCell => value !== null);
+    .map((cell) => ({
+      ...cell,
+      metricValue: metric === "flight_count" ? cell.flight_count : cell.time_seconds,
+    }))
+    .filter((cell) => cell.metricValue > 0);
 }

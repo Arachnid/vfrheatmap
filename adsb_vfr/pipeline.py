@@ -26,7 +26,6 @@ from adsb_vfr.lib.classifier import (
     is_always_ifr_type,
     is_always_vfr_type,
 )
-from adsb_vfr.lib.altitude_bins import altitude_ft_to_bin
 from adsb_vfr.lib.era5_lookup import Era5Lookup
 from adsb_vfr.lib.geo import great_circle_distance_nm, h3_cell, initial_bearing_deg
 from adsb_vfr.lib.trace_format import iter_trace_tarball_points
@@ -83,7 +82,6 @@ def _base_unified_row(row_type: str) -> dict[str, Any]:
         "agg_date": None,
         "classification_group": None,
         "h3_cell": None,
-        "alt_bin": None,
         "flight_count": None,
         "time_seconds": None,
         "sum_cos_track": None,
@@ -102,7 +100,6 @@ def to_unified_aggregate_row(row: dict[str, Any]) -> dict[str, Any]:
             "agg_date": str(row["agg_date"]),
             "classification_group": str(row["classification_group"]),
             "h3_cell": int(row["h3_cell"]),
-            "alt_bin": int(row["alt_bin"]),
             "vehicle_class": str(row["vehicle_class"]),
             "flight_count": int(row["flight_count"]),
             "time_seconds": float(row["time_seconds"]),
@@ -546,9 +543,7 @@ def add_aggregate_keys(row: dict[str, Any]) -> dict[str, Any]:
     if group is None:
         row["classification_group"] = None
         return row
-    alt_bin = altitude_ft_to_bin(float(row["alt_qnh_ft"]))
     row["classification_group"] = group
-    row["alt_bin"] = alt_bin
     row["h3_cell"] = int(h3.str_to_int(str(row["res9_idx"])))
     track = float(row["track_deg"])
     weight = float(row["time_weight"])
@@ -594,7 +589,7 @@ def build_and_run_pipeline(
     )
     intersections_ds = edges_ds.flat_map(edge_to_cell_intersections)
     keyed_ds = intersections_ds.map(add_aggregate_keys).filter(lambda r: r.get("classification_group") is not None)
-    group_keys = ["agg_date", "classification_group", "h3_cell", "alt_bin", "vehicle_class"]
+    group_keys = ["agg_date", "classification_group", "h3_cell", "vehicle_class"]
     aggregates_ds = keyed_ds.groupby(group_keys).aggregate(
         Sum("point_weight", alias_name="time_seconds"),
         Sum("sum_cos_track", alias_name="sum_cos_track"),

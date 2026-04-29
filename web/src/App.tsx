@@ -7,13 +7,13 @@ import maplibregl from "maplibre-gl";
 import { BottomBar } from "./components/BottomBar";
 import { ControlPanel } from "./components/ControlPanel";
 import { buildTrafficLayer } from "./layers/traffic";
-import { filterCellsByAltitude } from "./tiles/filter";
+import { cellsWithMetric } from "./tiles/filter";
 import { TileManager } from "./tiles/manager";
 import { tilesForViewport, type TileKey } from "./tiles/tileMath";
 import type { Classification, Manifest, Metric, TileCell } from "./types";
 
 const tileManager = new TileManager();
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const HEATMAP_GLOBAL_SATURATION_FRACTION = 0.99;
 const H3_RESOLUTION_SCALE_FACTOR = 6;
 const AIRSPACE_TILE_TEMPLATE = "./data/airspace/tiles/z{z}/x{x}/y{y}.png";
@@ -60,8 +60,6 @@ export default function App() {
   const [showIfr, setShowIfr] = useState(false);
   const [showHelicopter, setShowHelicopter] = useState(false);
   const [metric, setMetric] = useState<Metric>("flight_count");
-  const [minBin, setMinBin] = useState(0);
-  const [maxBin, setMaxBin] = useState(54);
   const [showAirspace, setShowAirspace] = useState(true);
   const [visibleTiles, setVisibleTiles] = useState<TileKey[]>([]);
 
@@ -239,10 +237,7 @@ export default function App() {
     applyAirspace().catch(() => setError("Failed to load airspace"));
   }, [showAirspace]);
 
-  const renderableCells = useMemo(
-    () => filterCellsByAltitude(cells, Math.min(minBin, maxBin), Math.max(minBin, maxBin), metric),
-    [cells, minBin, maxBin, metric]
-  );
+  const renderableCells = useMemo(() => cellsWithMetric(cells, metric), [cells, metric]);
   const dominantH3Resolution = useMemo(() => {
     if (renderableCells.length === 0) {
       return null;
@@ -305,8 +300,8 @@ export default function App() {
     }
     return positiveValues.reduce((max, value) => Math.max(max, value), 0);
   }, [manifest, selectedClassifications, metric, renderableCells, dominantH3Resolution]);
-  const flightsTotal = renderableCells.reduce((acc, cell) => acc + cell.selectedFlightCount, 0);
-  const secondsTotal = renderableCells.reduce((acc, cell) => acc + cell.selectedTimeSeconds, 0);
+  const flightsTotal = renderableCells.reduce((acc, cell) => acc + cell.flight_count, 0);
+  const secondsTotal = renderableCells.reduce((acc, cell) => acc + cell.time_seconds, 0);
 
   useEffect(() => {
     if (!overlayRef.current) {
@@ -339,15 +334,11 @@ export default function App() {
         showIfr={showIfr}
         showHelicopter={showHelicopter}
         metric={metric}
-        minBin={minBin}
-        maxBin={maxBin}
         showAirspace={showAirspace}
         onToggleVfr={() => setShowVfr((prev) => !prev)}
         onToggleIfr={() => setShowIfr((prev) => !prev)}
         onToggleHelicopter={() => setShowHelicopter((prev) => !prev)}
         onMetricChange={setMetric}
-        onMinBinChange={setMinBin}
-        onMaxBinChange={setMaxBin}
         onToggleAirspace={() => setShowAirspace((prev) => !prev)}
       />
       {manifest ? (

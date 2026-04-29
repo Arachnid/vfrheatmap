@@ -17,7 +17,7 @@ from ray.data.aggregate import Sum
 
 from adsb_vfr.tiles import SCHEMA_VERSION
 from adsb_vfr.tiles.airspace import write_airspace_outputs
-from adsb_vfr.tiles.models import AltBinValue, ClassificationScale, Manifest, ResolutionScale, TileCell, TilePayload
+from adsb_vfr.tiles.models import ClassificationScale, Manifest, ResolutionScale, TileCell, TilePayload
 from adsb_vfr.tiles.tile_math import ZOOM_TO_H3_RESOLUTION, TileKey, h3_cell_to_tile
 
 SCALE_SAMPLE_SIZE = 200_000
@@ -86,7 +86,6 @@ def _load_daily_res9_rows(
         f"""
         SELECT
           h3_cell,
-          alt_bin,
           SUM(flight_count) AS flight_count,
           SUM(time_seconds) AS time_seconds,
           SUM(sum_cos_track) AS sum_cos_track,
@@ -95,14 +94,13 @@ def _load_daily_res9_rows(
           SUM(point_count) AS point_count
         FROM {table_name}
         WHERE agg_date BETWEEN ? AND ?
-        GROUP BY h3_cell, alt_bin
+        GROUP BY h3_cell
         """,
         [start_date, end_date],
     ).fetchall()
     return [
         {
             "h3_cell": int(h3_cell),
-            "alt_bin": int(alt_bin),
             "flight_count": int(flight_count),
             "time_seconds": float(time_seconds),
             "sum_cos_track": float(sum_cos_track),
@@ -110,14 +108,13 @@ def _load_daily_res9_rows(
             "sum_speed": float(sum_speed),
             "point_count": int(point_count),
         }
-        for h3_cell, alt_bin, flight_count, time_seconds, sum_cos_track, sum_sin_track, sum_speed, point_count in rows
+        for h3_cell, flight_count, time_seconds, sum_cos_track, sum_sin_track, sum_speed, point_count in rows
     ]
 
 
 def _expand_base_row_to_all_resolutions(row: dict[str, float | int]) -> list[dict[str, float | int]]:
     """Emit one row per rollup resolution so a single Ray groupby can aggregate all map resolutions."""
     cell = int(row["h3_cell"])
-    alt_bin = int(row["alt_bin"])
     flight_count = int(row["flight_count"])
     time_seconds = float(row["time_seconds"])
     sum_cos_track = float(row["sum_cos_track"])
@@ -134,7 +131,6 @@ def _expand_base_row_to_all_resolutions(row: dict[str, float | int]) -> list[dic
             {
                 "h3_resolution": resolution,
                 "h3_cell": parent,
-                "alt_bin": alt_bin,
                 "flight_count": flight_count,
                 "time_seconds": time_seconds,
                 "sum_cos_track": sum_cos_track,
@@ -148,14 +144,14 @@ def _expand_base_row_to_all_resolutions(row: dict[str, float | int]) -> list[dic
 
 def _rollup_rows_by_h3_resolution(
     base_rows: list[dict[str, float | int]],
-) -> dict[int, list[tuple[int, int, int, float, float, float, float, int]]]:
+) -> dict[int, list[tuple[int, int, float, float, float, float, int]]]:
     """One Ray Data pipeline per classification: expand res-9 rows to all resolutions, then aggregate."""
-    empty: dict[int, list[tuple[int, int, int, float, float, float, float, int]]] = {r: [] for r in ROLLUP_H3_RESOLUTIONS}
+    empty: dict[int, list[tuple[int, int, float, float, float, float, int]]] = {r: [] for r in ROLLUP_H3_RESOLUTIONS}
     if not base_rows:
         return empty
     ds = ray.data.from_items(base_rows)
     ds = ds.flat_map(_expand_base_row_to_all_resolutions)
-    grouped = ds.groupby(["h3_resolution", "h3_cell", "alt_bin"]).aggregate(
+    grouped = ds.groupby(["h3_resolution", "h3_cell"]).aggregate(
         Sum("flight_count", alias_name="flight_count"),
         Sum("time_seconds", alias_name="time_seconds"),
         Sum("sum_cos_track", alias_name="sum_cos_track"),
@@ -163,13 +159,12 @@ def _rollup_rows_by_h3_resolution(
         Sum("sum_speed", alias_name="sum_speed"),
         Sum("point_count", alias_name="point_count"),
     )
-    rows_by: dict[int, list[tuple[int, int, int, float, float, float, float, int]]] = {r: [] for r in ROLLUP_H3_RESOLUTIONS}
+    rows_by: dict[int, list[tuple[int, int, float, float, float, float, int]]] = {r: [] for r in ROLLUP_H3_RESOLUTIONS}
     for row in grouped.take_all():
         r = int(row["h3_resolution"])
         rows_by[r].append(
             (
                 int(row["h3_cell"]),
-                int(row["alt_bin"]),
                 int(row["flight_count"]),
                 float(row["time_seconds"]),
                 float(row["sum_cos_track"]),
@@ -182,63 +177,35 @@ def _rollup_rows_by_h3_resolution(
 
 
 def _build_tile_payloads(
-    rows: list[tuple[int, int, int, float, float, float, float, int]],
+    rows: list[tuple[int, int, float, float, float, float, int]],
     zoom: int,
     h3_resolution: int,
     bbox: tuple[float, float, float, float],
-) -> tuple[dict[TileKey, list[TileCell]], set[int]]:
+) -> dict[TileKey, list[TileCell]]:
     min_lat, min_lon, max_lat, max_lon = bbox
-    per_cell: dict[int, dict[str, object]] = {}
-    alt_bins_seen: set[int] = set()
+    tiles: dict[TileKey, list[TileCell]] = defaultdict(list)
     for row in rows:
-        h3_cell, alt_bin, flight_count, time_seconds, sum_cos, sum_sin, sum_speed, point_count = row
+        h3_cell, flight_count, time_seconds, sum_cos, sum_sin, sum_speed, point_count = row
         lat, lon = h3.cell_to_latlng(h3.int_to_str(int(h3_cell)))
         if lat < min_lat or lat > max_lat or lon < min_lon or lon > max_lon:
             continue
-        key = int(h3_cell)
-        entry = per_cell.setdefault(
-            key,
-            {
-                "time_seconds": 0.0,
-                "flight_count": 0,
-                "sum_cos": 0.0,
-                "sum_sin": 0.0,
-                "sum_speed": 0.0,
-                "point_count": 0,
-                "alt_bins": [],
-            },
-        )
-        entry["time_seconds"] = float(entry["time_seconds"]) + float(time_seconds)
-        entry["flight_count"] = int(entry["flight_count"]) + int(flight_count)
-        entry["sum_cos"] = float(entry["sum_cos"]) + float(sum_cos)
-        entry["sum_sin"] = float(entry["sum_sin"]) + float(sum_sin)
-        entry["sum_speed"] = float(entry["sum_speed"]) + float(sum_speed)
-        entry["point_count"] = int(entry["point_count"]) + int(point_count)
-        entry["alt_bins"].append(AltBinValue(bin_index=int(alt_bin), time_seconds=float(time_seconds), flight_count=int(flight_count)))
-        alt_bins_seen.add(int(alt_bin))
-
-    tiles: dict[TileKey, list[TileCell]] = defaultdict(list)
-    for h3_cell, agg in per_cell.items():
-        time_seconds = float(agg["time_seconds"])
-        point_count = int(agg["point_count"])
-        mean_track_x = float(agg["sum_cos"]) / time_seconds if time_seconds > 0 else 0.0
-        mean_track_y = float(agg["sum_sin"]) / time_seconds if time_seconds > 0 else 0.0
+        mean_track_x = sum_cos / time_seconds if time_seconds > 0 else 0.0
+        mean_track_y = sum_sin / time_seconds if time_seconds > 0 else 0.0
         coherence = min(1.0, math.sqrt(mean_track_x * mean_track_x + mean_track_y * mean_track_y))
-        mean_speed = float(agg["sum_speed"]) / point_count if point_count > 0 else 0.0
+        mean_speed = sum_speed / point_count if point_count > 0 else 0.0
         tile_key = h3_cell_to_tile(h3_cell, zoom=zoom)
         tiles[tile_key].append(
             TileCell(
                 h3=h3.int_to_str(int(h3_cell)),
-                flight_count=int(agg["flight_count"]),
-                time_seconds=time_seconds,
+                flight_count=int(flight_count),
+                time_seconds=float(time_seconds),
                 mean_track_x=mean_track_x,
                 mean_track_y=mean_track_y,
                 coherence=coherence,
                 mean_speed=mean_speed,
-                alt_bins=sorted(list(agg["alt_bins"]), key=lambda x: x.bin_index),
             )
         )
-    return tiles, alt_bins_seen
+    return tiles
 
 
 def _write_tile_file(output_root: Path, classification: str, tile_key: TileKey, payload: TilePayload, logger: logging.Logger) -> None:
@@ -284,7 +251,6 @@ def build_tiles(config: BuildTilesConfig, logger: logging.Logger | None = None) 
     default_bbox, latest_start, latest_end, config_hash = _read_latest_ingest(conn)
     start_date, end_date = _resolve_date_range(config, latest_start=latest_start, latest_end=latest_end)
     bbox = config.bbox or default_bbox
-    altitude_bins: set[int] = set()
     available_resolutions = list(ROLLUP_H3_RESOLUTIONS)
     classification_scales: dict[str, ClassificationScale] = {}
     rng = random.Random(20260429)
@@ -315,13 +281,12 @@ def build_tiles(config: BuildTilesConfig, logger: logging.Logger | None = None) 
         rows_by_h3_resolution = _rollup_rows_by_h3_resolution(base_rows)
         for zoom, resolution in ZOOM_TO_H3_RESOLUTION.items():
             rows = rows_by_h3_resolution[resolution]
-            tiles, bins_seen = _build_tile_payloads(
+            tiles = _build_tile_payloads(
                 rows=rows,
                 zoom=zoom,
                 h3_resolution=resolution,
                 bbox=bbox,
             )
-            altitude_bins.update(bins_seen)
             for tile_key, cells in tiles.items():
                 payload = TilePayload(
                     z=tile_key.z,
@@ -373,7 +338,6 @@ def build_tiles(config: BuildTilesConfig, logger: logging.Logger | None = None) 
         date_range={"start": start_date.isoformat(), "end": end_date.isoformat()},
         classifier_config_hash=config_hash,
         h3_resolutions=available_resolutions,
-        altitude_bins=sorted(altitude_bins),
         classifications=["vfr", "ifr", "helicopter"],
         classification_scales=classification_scales,
     )

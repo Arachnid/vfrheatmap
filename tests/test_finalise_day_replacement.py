@@ -28,7 +28,6 @@ def _vfr_row(
         "agg_date": day,
         "classification_group": "vfr",
         "h3_cell": h3_cell,
-        "alt_bin": 4,
         "vehicle_class": "fixed_wing",
         "flight_count": 1,
         "time_seconds": float(point_count),

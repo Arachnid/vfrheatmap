@@ -1,4 +1,4 @@
-"""Altitude bin indices for aggregation and tiles (must match web/src/lib/altitudeBins.ts)."""
+"""Altitude helpers for classifier / ERA5 (transition altitude)."""
 
 from __future__ import annotations
 

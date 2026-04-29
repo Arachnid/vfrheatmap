@@ -1,0 +1,156 @@
+2026-04-29 14:30:44,086	INFO worker.py:2003 -- Started a local Ray instance. View the dashboard at [1m[32mhttp://127.0.0.1:8265 [39m[22m
+/home/arachnid/projects/vfrhotness/.venv/lib/python3.12/site-packages/ray/_private/worker.py:2051: FutureWarning: Tip: In future versions of Ray, Ray will no longer override accelerator visible devices env var if num_gpus=0 or num_gpus=None (default). To enable this behavior and turn off this error message, set RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO=0
+  warnings.warn(
+INFO:adsb_vfr.lib.airspace_lookup:Fetched 1188 OpenAIP airspace records
+/home/arachnid/projects/vfrhotness/.venv/lib/python3.12/site-packages/ray/data/dataset.py:1633: UserWarning: Use 'expr' instead of 'fn' when possible for performant filters.
+  warnings.warn(
+2026-04-29 14:30:45,361	INFO logging.py:416 -- Registered dataset logger for dataset dataset_10_0
+2026-04-29 14:30:45,372	INFO streaming_executor.py:166 -- Starting execution of Dataset dataset_10_0. Full logs are in /tmp/ray/session_2026-04-29_14-30-41_398149_3317845/logs/ray-data
+2026-04-29 14:30:45,372	INFO streaming_executor.py:167 -- Execution plan of Dataset dataset_10_0: InputDataBuffer[Input] -> TaskPoolMapOperator[FlatMap(parse_correct_flatmap)] -> HashShuffleOperator[Shuffle(key_columns=('hex_id',), num_partitions=256)] -> TaskPoolMapOperator[MapBatches(_segment_to_edges_batch_count_unknown)->FlatMap(edge_to_cell_intersections)->Map(add_aggregate_keys)->Filter(<lambda>)] -> HashAggregateOperator[HashAggregate(key_columns=('agg_date', 'classification_group', 'h3_cell', 'vehicle_class'), num_partitions=256)] -> TaskPoolMapOperator[Map(to_unified_aggregate_row)->Write]
+2026-04-29 14:30:45,409	WARNING resource_manager.py:169 -- ⚠️  Ray's object store is configured to use only 42.9% of available memory (49.1GiB out of 114.6GiB total). For optimal Ray Data performance, we recommend setting the object store to at least 50% of available memory. You can do this by setting the 'object_store_memory' parameter when calling ray.init() or by setting the RAY_DEFAULT_OBJECT_STORE_MEMORY_PROPORTION environment variable.
+2026-04-29 14:30:45,410	INFO __init__.py:56 -- Progress will be logged because stdout is a non-interactive terminal.
+2026-04-29 14:30:45,410	WARNING utils.py:33 -- Truncating long operator name to 100 characters. To disable this behavior, set `ray.data.DataContext.get_current().DEFAULT_ENABLE_PROGRESS_BAR_NAME_TRUNCATION = False`.
+2026-04-29 14:30:47,015	INFO logging_progress.py:174 -- ======= Running Dataset: dataset_10_0 =======
+2026-04-29 14:30:47,016	INFO logging_progress.py:225 -- Total Progress: 0/?
+2026-04-29 14:30:47,016	INFO logging_progress.py:227 -- Active & requested resources: 16/32 CPU, 0.0B/24.6GiB object store
+2026-04-29 14:30:47,016	INFO logging_progress.py:181 -- 
+2026-04-29 14:30:47,016	INFO logging_progress.py:231 -- FlatMap(parse_correct_flatmap): 0/1
+2026-04-29 14:30:47,016	INFO logging_progress.py:233 --   Tasks: 1; Actors: 0; Queued blocks: 6 (0.0B); Resources: 1.0 CPU, 0.0B object store
+2026-04-29 14:30:47,016	INFO logging_progress.py:231 -- Shuffle(key_columns=('hex_id',), num_partitions=256): 0/1
+2026-04-29 14:30:47,016	INFO logging_progress.py:233 --   Tasks: 0; Actors: 0; Queued blocks: 0 (0.0B); Resources: 8.0 CPU, 0.0B object store
+2026-04-29 14:30:47,016	INFO logging_progress.py:231 --     - Shuffle: 0/1
+2026-04-29 14:30:47,016	INFO logging_progress.py:231 --     - Reduce: 0/1
+2026-04-29 14:30:47,016	INFO logging_progress.py:231 -- MapBatches(_segment_to_edges_batch_count_unknown)->...->Filter(<lambda>): 0/1
+2026-04-29 14:30:47,016	INFO logging_progress.py:233 --   Tasks: 0; Actors: 0; Queued blocks: 0 (0.0B); Resources: 0.0 CPU, 0.0B object store
+2026-04-29 14:30:47,016	INFO logging_progress.py:231 -- HashAggregate(key_columns=('agg_date', 'classification_group', 'h3_cell', 'vehicle_class'), num_partitions=256): 0/1
+2026-04-29 14:30:47,016	INFO logging_progress.py:233 --   Tasks: 0; Actors: 0; Queued blocks: 0 (0.0B); Resources: 8.0 CPU, 0.0B object store
+2026-04-29 14:30:47,016	INFO logging_progress.py:231 --     - Shuffle: 0/1
+2026-04-29 14:30:47,016	INFO logging_progress.py:231 --     - Aggregation: 0/1
+2026-04-29 14:30:47,016	INFO logging_progress.py:231 -- Map(to_unified_aggregate_row)->Write: 0/1
+2026-04-29 14:30:47,016	INFO logging_progress.py:233 --   Tasks: 0; Actors: 0; Queued blocks: 0 (0.0B); Resources: 0.0 CPU, 0.0B object store
+2026-04-29 14:30:47,016	INFO logging_progress.py:192 -- =============================================
+[36m(FlatMap(parse_correct_flatmap) pid=3323357)[0m /home/arachnid/projects/vfrhotness/adsb_vfr/pipeline.py:160: UserWarning: no explicit representation of timezones available for np.datetime64
+[36m(FlatMap(parse_correct_flatmap) pid=3323357)[0m   times = np.array([r["timestamp"] for r in chunk], dtype="datetime64[ns]")
+[36m(FlatMap(parse_correct_flatmap) pid=3323342)[0m   return np.datetime64(dt).astype(f"datetime64[{precision}]")
+[36m(FlatMap(parse_correct_flatmap) pid=3323342)[0m /home/arachnid/projects/vfrhotness/.venv/lib/python3.12/site-packages/ray/data/_internal/numpy_support.py:96: UserWarning: no explicit representation of timezones available for np.datetime64[32m [repeated 5x across cluster] (Ray deduplicates logs by default. Set RAY_DEDUP_LOGS=0 to disable log deduplication, or see https://docs.ray.io/en/master/ray-observability/user-guides/configure-logging.html#log-deduplication for more options.)[0m
+[36m(FlatMap(parse_correct_flatmap) pid=3323342)[0m   times = np.array([r["timestamp"] for r in chunk], dtype="datetime64[ns]")[32m [repeated 4x across cluster][0m
+2026-04-29 14:30:57,058	INFO logging_progress.py:174 -- ======= Running Dataset: dataset_10_0 =======
+2026-04-29 14:30:57,058	INFO logging_progress.py:225 -- Total Progress: 0/?
+2026-04-29 14:30:57,058	INFO logging_progress.py:227 -- Active & requested resources: 21/32 CPU, 111.6MiB/24.6GiB object store
+2026-04-29 14:30:57,058	INFO logging_progress.py:181 -- 
+2026-04-29 14:30:57,058	INFO logging_progress.py:231 -- FlatMap(parse_correct_flatmap): 263264/1842848
+2026-04-29 14:30:57,058	INFO logging_progress.py:233 --   Tasks: 4 [backpressured:tasks(ResourceBudget)]; Actors: 0; Queued blocks: 2 (0.0B); Resources: 4.0 CPU, 111.6MiB object store
+2026-04-29 14:30:57,059	INFO logging_progress.py:231 -- Shuffle(key_columns=('hex_id',), num_partitions=256): 0/1
+2026-04-29 14:30:57,059	INFO logging_progress.py:233 --   Tasks: 1; Actors: 0; Queued blocks: 0 (0.0B); Resources: 9.0 CPU, 0.0B object store
+2026-04-29 14:30:57,059	INFO logging_progress.py:231 --     - Shuffle: 0/?
+2026-04-29 14:30:57,059	INFO logging_progress.py:231 --     - Reduce: 0/1
+2026-04-29 14:30:57,059	INFO logging_progress.py:231 -- MapBatches(_segment_to_edges_batch_count_unknown)->...->Filter(<lambda>): 0/1
+2026-04-29 14:30:57,059	INFO logging_progress.py:233 --   Tasks: 0; Actors: 0; Queued blocks: 0 (0.0B); Resources: 0.0 CPU, 0.0B object store
+2026-04-29 14:30:57,059	INFO logging_progress.py:231 -- HashAggregate(key_columns=('agg_date', 'classification_group', 'h3_cell', 'vehicle_class'), num_partitions=256): 0/1
+2026-04-29 14:30:57,059	INFO logging_progress.py:233 --   Tasks: 0; Actors: 0; Queued blocks: 0 (0.0B); Resources: 8.0 CPU, 0.0B object store
+2026-04-29 14:30:57,059	INFO logging_progress.py:231 --     - Shuffle: 0/1
+2026-04-29 14:30:57,059	INFO logging_progress.py:231 --     - Aggregation: 0/1
+2026-04-29 14:30:57,059	INFO logging_progress.py:231 -- Map(to_unified_aggregate_row)->Write: 0/1
+2026-04-29 14:30:57,059	INFO logging_progress.py:233 --   Tasks: 0; Actors: 0; Queued blocks: 0 (0.0B); Resources: 0.0 CPU, 0.0B object store
+2026-04-29 14:30:57,059	INFO logging_progress.py:192 -- =============================================
+[36m(FlatMap(parse_correct_flatmap) pid=3323357)[0m   return np.datetime64(dt).astype(f"datetime64[{precision}]")[32m [repeated 2x across cluster][0m
+[36m(FlatMap(parse_correct_flatmap) pid=3323357)[0m /home/arachnid/projects/vfrhotness/.venv/lib/python3.12/site-packages/ray/data/_internal/numpy_support.py:96: UserWarning: no explicit representation of timezones available for np.datetime64[32m [repeated 2x across cluster][0m
+2026-04-29 14:31:07,108	INFO logging_progress.py:174 -- ======= Running Dataset: dataset_10_0 =======
+2026-04-29 14:31:07,108	INFO logging_progress.py:225 -- Total Progress: 0/?
+2026-04-29 14:31:07,108	INFO logging_progress.py:227 -- Active & requested resources: 19/32 CPU, 92.1MiB/24.6GiB object store
+2026-04-29 14:31:07,108	INFO logging_progress.py:181 -- 
+2026-04-29 14:31:07,108	INFO logging_progress.py:231 -- FlatMap(parse_correct_flatmap): 1447624/2533342
+2026-04-29 14:31:07,108	INFO logging_progress.py:233 --   Tasks: 3; Actors: 0; Queued blocks: 0 (0.0B); Resources: 3.0 CPU, 92.1MiB object store
+2026-04-29 14:31:07,108	INFO logging_progress.py:231 -- Shuffle(key_columns=('hex_id',), num_partitions=256): 1447624/1
+2026-04-29 14:31:07,108	INFO logging_progress.py:233 --   Tasks: 0; Actors: 0; Queued blocks: 0 (0.0B); Resources: 8.0 CPU, 0.0B object store
+2026-04-29 14:31:07,109	INFO logging_progress.py:231 --     - Shuffle: 1447624/2914557
+2026-04-29 14:31:07,109	INFO logging_progress.py:231 --     - Reduce: 0/1
+2026-04-29 14:31:07,109	INFO logging_progress.py:231 -- MapBatches(_segment_to_edges_batch_count_unknown)->...->Filter(<lambda>): 0/1
+2026-04-29 14:31:07,109	INFO logging_progress.py:233 --   Tasks: 0; Actors: 0; Queued blocks: 0 (0.0B); Resources: 0.0 CPU, 0.0B object store
+2026-04-29 14:31:07,109	INFO logging_progress.py:231 -- HashAggregate(key_columns=('agg_date', 'classification_group', 'h3_cell', 'vehicle_class'), num_partitions=256): 0/1
+2026-04-29 14:31:07,109	INFO logging_progress.py:233 --   Tasks: 0; Actors: 0; Queued blocks: 0 (0.0B); Resources: 8.0 CPU, 0.0B object store
+2026-04-29 14:31:07,109	INFO logging_progress.py:231 --     - Shuffle: 0/1
+2026-04-29 14:31:07,109	INFO logging_progress.py:231 --     - Aggregation: 0/1
+2026-04-29 14:31:07,109	INFO logging_progress.py:231 -- Map(to_unified_aggregate_row)->Write: 0/1
+2026-04-29 14:31:07,109	INFO logging_progress.py:233 --   Tasks: 0; Actors: 0; Queued blocks: 0 (0.0B); Resources: 0.0 CPU, 0.0B object store
+2026-04-29 14:31:07,109	INFO logging_progress.py:192 -- =============================================
+[36m(FlatMap(parse_correct_flatmap) pid=3323343)[0m   return np.datetime64(dt).astype(f"datetime64[{precision}]")[32m [repeated 2x across cluster][0m
+[36m(FlatMap(parse_correct_flatmap) pid=3323343)[0m /home/arachnid/projects/vfrhotness/.venv/lib/python3.12/site-packages/ray/data/_internal/numpy_support.py:96: UserWarning: no explicit representation of timezones available for np.datetime64[32m [repeated 2x across cluster][0m
+2026-04-29 14:31:17,153	INFO logging_progress.py:174 -- ======= Running Dataset: dataset_10_0 =======
+2026-04-29 14:31:17,153	INFO logging_progress.py:225 -- Total Progress: 0/?
+2026-04-29 14:31:17,153	INFO logging_progress.py:227 -- Active & requested resources: 17/32 CPU, 37.0MiB/24.6GiB object store
+2026-04-29 14:31:17,153	INFO logging_progress.py:181 -- 
+2026-04-29 14:31:17,153	INFO logging_progress.py:231 -- FlatMap(parse_correct_flatmap): 2620926/3057747
+2026-04-29 14:31:17,153	INFO logging_progress.py:233 --   Tasks: 1; Actors: 0; Queued blocks: 0 (0.0B); Resources: 1.0 CPU, 37.0MiB object store
+2026-04-29 14:31:17,153	INFO logging_progress.py:231 -- Shuffle(key_columns=('hex_id',), num_partitions=256): 2620926/1
+2026-04-29 14:31:17,153	INFO logging_progress.py:233 --   Tasks: 0; Actors: 0; Queued blocks: 0 (0.0B); Resources: 8.0 CPU, 0.0B object store
+2026-04-29 14:31:17,153	INFO logging_progress.py:231 --     - Shuffle: 2620926/2846796
+2026-04-29 14:31:17,153	INFO logging_progress.py:231 --     - Reduce: 0/1
+2026-04-29 14:31:17,153	INFO logging_progress.py:231 -- MapBatches(_segment_to_edges_batch_count_unknown)->...->Filter(<lambda>): 0/1
+2026-04-29 14:31:17,153	INFO logging_progress.py:233 --   Tasks: 0; Actors: 0; Queued blocks: 0 (0.0B); Resources: 0.0 CPU, 0.0B object store
+2026-04-29 14:31:17,153	INFO logging_progress.py:231 -- HashAggregate(key_columns=('agg_date', 'classification_group', 'h3_cell', 'vehicle_class'), num_partitions=256): 0/1
+2026-04-29 14:31:17,153	INFO logging_progress.py:233 --   Tasks: 0; Actors: 0; Queued blocks: 0 (0.0B); Resources: 8.0 CPU, 0.0B object store
+2026-04-29 14:31:17,153	INFO logging_progress.py:231 --     - Shuffle: 0/1
+2026-04-29 14:31:17,153	INFO logging_progress.py:231 --     - Aggregation: 0/1
+2026-04-29 14:31:17,153	INFO logging_progress.py:231 -- Map(to_unified_aggregate_row)->Write: 0/1
+2026-04-29 14:31:17,153	INFO logging_progress.py:233 --   Tasks: 0; Actors: 0; Queued blocks: 0 (0.0B); Resources: 0.0 CPU, 0.0B object store
+2026-04-29 14:31:17,153	INFO logging_progress.py:192 -- =============================================
+2026-04-29 14:31:27,171	INFO logging_progress.py:174 -- ======= Running Dataset: dataset_10_0 =======
+2026-04-29 14:31:27,171	INFO logging_progress.py:225 -- Total Progress: 0/?
+2026-04-29 14:31:27,171	INFO logging_progress.py:227 -- Active & requested resources: 26/32 CPU, 269.6MiB/24.6GiB object store
+2026-04-29 14:31:27,171	INFO logging_progress.py:181 -- 
+2026-04-29 14:31:27,171	INFO logging_progress.py:231 -- FlatMap(parse_correct_flatmap): 3179639/3179639
+2026-04-29 14:31:27,171	INFO logging_progress.py:233 --   Tasks: 0; Actors: 0; Queued blocks: 0 (0.0B); Resources: 0.0 CPU, 0.0B object store
+2026-04-29 14:31:27,171	INFO logging_progress.py:231 -- Shuffle(key_columns=('hex_id',), num_partitions=256): 3179639/?
+2026-04-29 14:31:27,171	INFO logging_progress.py:233 --   Tasks: 0; Actors: 0; Queued blocks: 0 (0.0B); Resources: 8.0 CPU, 269.6MiB object store
+2026-04-29 14:31:27,171	INFO logging_progress.py:231 --     - Shuffle: 3179639/3032950
+2026-04-29 14:31:27,171	INFO logging_progress.py:231 --     - Reduce: 3179639/?
+2026-04-29 14:31:27,171	INFO logging_progress.py:231 -- MapBatches(_segment_to_edges_batch_count_unknown)->...->Filter(<lambda>): 0/1
+2026-04-29 14:31:27,171	INFO logging_progress.py:233 --   Tasks: 10 [backpressured:tasks(ResourceBudget)]; Actors: 0; Queued blocks: 246 (258.3MiB); Resources: 10.0 CPU, 0.0B object store
+2026-04-29 14:31:27,171	INFO logging_progress.py:231 -- HashAggregate(key_columns=('agg_date', 'classification_group', 'h3_cell', 'vehicle_class'), num_partitions=256): 0/1
+2026-04-29 14:31:27,172	INFO logging_progress.py:233 --   Tasks: 0; Actors: 0; Queued blocks: 0 (0.0B); Resources: 8.0 CPU, 0.0B object store
+2026-04-29 14:31:27,172	INFO logging_progress.py:231 --     - Shuffle: 0/1
+2026-04-29 14:31:27,172	INFO logging_progress.py:231 --     - Aggregation: 0/1
+2026-04-29 14:31:27,172	INFO logging_progress.py:231 -- Map(to_unified_aggregate_row)->Write: 0/1
+2026-04-29 14:31:27,172	INFO logging_progress.py:233 --   Tasks: 0; Actors: 0; Queued blocks: 0 (0.0B); Resources: 0.0 CPU, 0.0B object store
+2026-04-29 14:31:27,172	INFO logging_progress.py:192 -- =============================================
+2026-04-29 14:31:37,200	INFO logging_progress.py:174 -- ======= Running Dataset: dataset_10_0 =======
+2026-04-29 14:31:37,200	INFO logging_progress.py:225 -- Total Progress: 0/?
+2026-04-29 14:31:37,200	INFO logging_progress.py:227 -- Active & requested resources: 26/32 CPU, 269.6MiB/24.6GiB object store
+2026-04-29 14:31:37,200	INFO logging_progress.py:181 -- 
+2026-04-29 14:31:37,200	INFO logging_progress.py:231 -- FlatMap(parse_correct_flatmap): 3179639/3179639
+2026-04-29 14:31:37,200	INFO logging_progress.py:233 --   Tasks: 0; Actors: 0; Queued blocks: 0 (0.0B); Resources: 0.0 CPU, 0.0B object store
+2026-04-29 14:31:37,200	INFO logging_progress.py:231 -- Shuffle(key_columns=('hex_id',), num_partitions=256): 3179639/?
+2026-04-29 14:31:37,200	INFO logging_progress.py:233 --   Tasks: 0; Actors: 0; Queued blocks: 0 (0.0B); Resources: 8.0 CPU, 269.6MiB object store
+2026-04-29 14:31:37,200	INFO logging_progress.py:231 --     - Shuffle: 3179639/3032950
+2026-04-29 14:31:37,201	INFO logging_progress.py:231 --     - Reduce: 3179639/?
+2026-04-29 14:31:37,201	INFO logging_progress.py:231 -- MapBatches(_segment_to_edges_batch_count_unknown)->...->Filter(<lambda>): 0/1
+2026-04-29 14:31:37,201	INFO logging_progress.py:233 --   Tasks: 10 [backpressured:tasks(ResourceBudget)]; Actors: 0; Queued blocks: 246 (258.3MiB); Resources: 10.0 CPU, 0.0B object store
+2026-04-29 14:31:37,201	INFO logging_progress.py:231 -- HashAggregate(key_columns=('agg_date', 'classification_group', 'h3_cell', 'vehicle_class'), num_partitions=256): 0/1
+2026-04-29 14:31:37,201	INFO logging_progress.py:233 --   Tasks: 0; Actors: 0; Queued blocks: 0 (0.0B); Resources: 8.0 CPU, 0.0B object store
+2026-04-29 14:31:37,201	INFO logging_progress.py:231 --     - Shuffle: 0/1
+2026-04-29 14:31:37,201	INFO logging_progress.py:231 --     - Aggregation: 0/1
+2026-04-29 14:31:37,201	INFO logging_progress.py:231 -- Map(to_unified_aggregate_row)->Write: 0/1
+2026-04-29 14:31:37,201	INFO logging_progress.py:233 --   Tasks: 0; Actors: 0; Queued blocks: 0 (0.0B); Resources: 0.0 CPU, 0.0B object store
+2026-04-29 14:31:37,201	INFO logging_progress.py:192 -- =============================================
+2026-04-29 14:31:47,234	INFO logging_progress.py:174 -- ======= Running Dataset: dataset_10_0 =======
+2026-04-29 14:31:47,234	INFO logging_progress.py:225 -- Total Progress: 0/?
+2026-04-29 14:31:47,234	INFO logging_progress.py:227 -- Active & requested resources: 26/32 CPU, 303.9MiB/24.6GiB object store
+2026-04-29 14:31:47,234	INFO logging_progress.py:181 -- 
+2026-04-29 14:31:47,234	INFO logging_progress.py:231 -- FlatMap(parse_correct_flatmap): 3179639/3179639
+2026-04-29 14:31:47,234	INFO logging_progress.py:233 --   Tasks: 0; Actors: 0; Queued blocks: 0 (0.0B); Resources: 0.0 CPU, 0.0B object store
+2026-04-29 14:31:47,234	INFO logging_progress.py:231 -- Shuffle(key_columns=('hex_id',), num_partitions=256): 3179639/?
+2026-04-29 14:31:47,234	INFO logging_progress.py:233 --   Tasks: 0; Actors: 0; Queued blocks: 0 (0.0B); Resources: 8.0 CPU, 269.1MiB object store
+2026-04-29 14:31:47,234	INFO logging_progress.py:231 --     - Shuffle: 3179639/3032950
+2026-04-29 14:31:47,234	INFO logging_progress.py:231 --     - Reduce: 3179639/?
+2026-04-29 14:31:47,234	INFO logging_progress.py:231 -- MapBatches(_segment_to_edges_batch_count_unknown)->...->Filter(<lambda>): 21914/?
+2026-04-29 14:31:47,234	INFO logging_progress.py:233 --   Tasks: 9 [backpressured:tasks(ResourceBudget)]; Actors: 0; Queued blocks: 246 (258.3MiB); Resources: 9.0 CPU, 34.7MiB object store
+2026-04-29 14:31:47,234	INFO logging_progress.py:231 -- HashAggregate(key_columns=('agg_date', 'classification_group', 'h3_cell', 'vehicle_class'), num_partitions=256): 0/1
+2026-04-29 14:31:47,234	INFO logging_progress.py:233 --   Tasks: 1; Actors: 0; Queued blocks: 0 (0.0B); Resources: 9.0 CPU, 0.0B object store
+2026-04-29 14:31:47,234	INFO logging_progress.py:231 --     - Shuffle: 0/?
+2026-04-29 14:31:47,235	INFO logging_progress.py:231 --     - Aggregation: 0/1
+2026-04-29 14:31:47,235	INFO logging_progress.py:231 -- Map(to_unified_aggregate_row)->Write: 0/1
+2026-04-29 14:31:47,235	INFO logging_progress.py:233 --   Tasks: 0; Actors: 0; Queued blocks: 0 (0.0B); Resources: 0.0 CPU, 0.0B object store
+2026-04-29 14:31:47,235	INFO logging_progress.py:192 -- =============================================
+[2026-04-29 14:31:50,487 E 3317845 3318823] core_worker.cc:475: :info_message: Attempting to recover 270 lost objects by resubmitting their tasks or setting a new primary location from existing copies. To disable object reconstruction, set @ray.remote(max_retries=0).
+--- restart 2026-04-29T14:32:13+01:00 ---

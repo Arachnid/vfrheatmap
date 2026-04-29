@@ -5,12 +5,6 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 
-class AltBinValue(BaseModel):
-    bin_index: int
-    time_seconds: float
-    flight_count: int
-
-
 class TileCell(BaseModel):
     h3: str
     flight_count: int
@@ -19,7 +13,6 @@ class TileCell(BaseModel):
     mean_track_y: float
     coherence: float
     mean_speed: float
-    alt_bins: list[AltBinValue]
 
 
 class TilePayload(BaseModel):
@@ -50,7 +43,6 @@ class Manifest(BaseModel):
     date_range: dict[str, str]
     classifier_config_hash: str
     h3_resolutions: list[int]
-    altitude_bins: list[int]
     classifications: list[str]
     classification_scales: dict[str, ClassificationScale] = Field(default_factory=dict)
 
