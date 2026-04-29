@@ -3,23 +3,25 @@ from __future__ import annotations
 import hashlib
 import logging
 import tempfile
+from functools import lru_cache
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
+import h3
 import numpy as np
 import pandas as pd
 import ray
 from ray.data.aggregate import Count, CountDistinct, Sum
+from shapely.geometry import LineString, Polygon
 
 from adsb_vfr.config import ClassifierConfig
 from adsb_vfr.lib.airspace_lookup import AirspaceLookup
 from adsb_vfr.lib.classifier import VFR_CLASSES, SegmentFeatures, classify_segment, is_always_ifr_emitter, is_always_vfr_type
 from adsb_vfr.lib.era5_lookup import Era5Lookup
-from adsb_vfr.lib.geo import densify_segment, great_circle_distance_nm, h3_cell, initial_bearing_deg
+from adsb_vfr.lib.geo import great_circle_distance_nm, h3_cell, initial_bearing_deg
 from adsb_vfr.lib.trace_format import iter_trace_tarball_points
-import h3
 
 LOGGER = logging.getLogger(__name__)
 
@@ -356,32 +358,124 @@ def segment_to_edges_batch(
     )
 
 
-def densify_edge(edge: dict[str, Any]) -> list[dict[str, Any]]:
-    points = densify_segment(
-        lat1=float(edge["start_lat"]),
-        lon1=float(edge["start_lon"]),
-        lat2=float(edge["end_lat"]),
-        lon2=float(edge["end_lon"]),
-        max_spacing_m=100.0,
-    )
-    duration = float(edge["edge_duration_s"])
-    if len(points) <= 1:
+@lru_cache(maxsize=200_000)
+def _cell_polygon(cell_id: str) -> Polygon:
+    boundary = h3.cell_to_boundary(cell_id)
+    return Polygon([(float(lon), float(lat)) for lat, lon in boundary])
+
+
+@lru_cache(maxsize=200_000)
+def _path_cells_res9(start_cell: str, end_cell: str) -> tuple[str, ...]:
+    try:
+        path_cells = list(h3.grid_path_cells(start_cell, end_cell))
+    except Exception:
+        path_cells = [start_cell, end_cell]
+    return tuple(path_cells)
+
+
+def _line_components(geometry: Any) -> list[LineString]:
+    geom_type = geometry.geom_type
+    if geom_type == "LineString":
+        return [geometry]
+    if geom_type == "MultiLineString":
+        return [part for part in geometry.geoms if part.length > 0]
+    if geom_type == "GeometryCollection":
+        out: list[LineString] = []
+        for part in geometry.geoms:
+            if part.geom_type == "LineString" and part.length > 0:
+                out.append(part)
+            elif part.geom_type == "MultiLineString":
+                out.extend([sub for sub in part.geoms if sub.length > 0])
+        return out
+    return []
+
+
+def _intersection_rows_for_cells(
+    line: LineString,
+    cells: set[str],
+) -> tuple[list[tuple[str, float, float, float, float]], float]:
+    line_len = float(line.length)
+    if line_len <= 0:
+        return [], 0.0
+    intersections: list[tuple[str, float, float, float, float]] = []
+    total_intersection_length = 0.0
+    x1, y1 = map(float, line.coords[0])
+    x2, y2 = map(float, line.coords[-1])
+    dx = x2 - x1
+    dy = y2 - y1
+    denom = max((dx * dx) + (dy * dy), 1e-12)
+    for cell in cells:
+        clipped = line.intersection(_cell_polygon(cell))
+        for component in _line_components(clipped):
+            seg_len = float(component.length)
+            if seg_len <= 0:
+                continue
+            midpoint = component.interpolate(0.5, normalized=True)
+            mx = float(midpoint.x)
+            my = float(midpoint.y)
+            # Parametric fraction along the source segment in [0, 1].
+            frac = ((mx - x1) * dx + (my - y1) * dy) / denom
+            frac = max(0.0, min(1.0, frac))
+            intersections.append((cell, seg_len, frac, my, mx))
+            total_intersection_length += seg_len
+    return intersections, total_intersection_length
+
+
+def edge_to_cell_intersections(edge: dict[str, Any]) -> list[dict[str, Any]]:
+    lat1 = float(edge["start_lat"])
+    lon1 = float(edge["start_lon"])
+    lat2 = float(edge["end_lat"])
+    lon2 = float(edge["end_lon"])
+    line = LineString([(lon1, lat1), (lon2, lat2)])
+    if line.length <= 0:
         return []
-    step_weight = duration / (len(points) - 1)
+
+    duration = float(edge["edge_duration_s"])
+    if duration <= 0:
+        return []
+
+    start_cell = h3_cell(lat1, lon1, resolution=9)
+    end_cell = h3_cell(lat2, lon2, resolution=9)
+    path_cells = set(_path_cells_res9(start_cell, end_cell))
+    intersections, total_intersection_length = _intersection_rows_for_cells(line, path_cells)
+
+    # Fast path: most segments are fully covered by the direct cell path.
+    # Expand to neighboring cells only when coverage suggests a miss.
+    line_len = float(line.length)
+    coverage_ratio = total_intersection_length / max(line_len, 1e-9)
+    if coverage_ratio < 0.995:
+        expanded_cells = set(path_cells)
+        for cell in path_cells:
+            expanded_cells.update(h3.grid_disk(cell, 1))
+        extra_cells = expanded_cells.difference(path_cells)
+        extra_intersections, extra_length = _intersection_rows_for_cells(line, extra_cells)
+        if extra_intersections:
+            intersections.extend(extra_intersections)
+            total_intersection_length += extra_length
+
+    if not intersections:
+        midpoint = line.interpolate(0.5, normalized=True)
+        intersections.append((start_cell, float(line.length), 0.5, float(midpoint.y), float(midpoint.x)))
+        total_intersection_length = float(line.length)
+
+    start_alt = float(edge["start_alt_qnh_ft"])
+    alt_delta = float(edge["end_alt_qnh_ft"]) - start_alt
     out: list[dict[str, Any]] = []
-    for p in points:
-        alt = float(edge["start_alt_qnh_ft"]) + (float(edge["end_alt_qnh_ft"]) - float(edge["start_alt_qnh_ft"])) * p.frac
+    denom = max(total_intersection_length, 1e-9)
+    for cell, seg_len, frac, lat_mid, lon_mid in intersections:
+        alt = start_alt + alt_delta * frac
         out.append(
             {
                 "segment_id": int(edge["segment_id"]),
                 "classification": str(edge["classification"]),
                 "vehicle_class": str(edge["vehicle_class"]),
-                "lat": float(p.lat),
-                "lon": float(p.lon),
+                "lat": lat_mid,
+                "lon": lon_mid,
                 "alt_qnh_ft": alt,
                 "track_deg": float(edge["track_deg"]),
                 "ground_speed_kt": float(edge["ground_speed_kt"]),
-                "time_weight": step_weight,
+                "time_weight": duration * (seg_len / denom),
+                "res9_idx": cell,
             }
         )
     return out
@@ -411,7 +505,7 @@ def add_aggregate_keys(row: dict[str, Any]) -> dict[str, Any]:
 def explode_resolutions(row: dict[str, Any]) -> list[dict[str, Any]]:
     track = float(row["track_deg"])
     weight = float(row["time_weight"])
-    res9_idx = h3_cell(float(row["lat"]), float(row["lon"]), resolution=9)
+    res9_idx = str(row.get("res9_idx") or h3_cell(float(row["lat"]), float(row["lon"]), resolution=9))
     res9_cell = int(h3.str_to_int(res9_idx))
     out_rows: list[dict[str, Any]] = []
     for resolution in (9, 8, 7, 6):
@@ -458,8 +552,8 @@ def build_and_run_pipeline(
         batch_format="pandas",
         fn_kwargs={"classifier_config": classifier_config, "airspace_ref": airspace_ref},
     )
-    densified_ds = edges_ds.flat_map(densify_edge)
-    keyed_ds = densified_ds.map(add_aggregate_keys).filter(lambda r: r.get("classification_group") is not None)
+    intersections_ds = edges_ds.flat_map(edge_to_cell_intersections)
+    keyed_ds = intersections_ds.map(add_aggregate_keys).filter(lambda r: r.get("classification_group") is not None)
     exploded_ds = keyed_ds.flat_map(explode_resolutions)
 
     group_keys = ["classification_group", "resolution", "h3_cell", "alt_bin", "vehicle_class"]
