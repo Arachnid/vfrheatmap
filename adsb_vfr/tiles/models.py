@@ -30,6 +30,19 @@ class TilePayload(BaseModel):
     cells: list[TileCell]
 
 
+class ResolutionScale(BaseModel):
+    flight_count_max: float
+    time_seconds_max: float
+    flight_count_p90: float
+    time_seconds_p90: float
+
+
+class ClassificationScale(BaseModel):
+    flight_count_max: float
+    time_seconds_max: float
+    by_resolution: dict[str, ResolutionScale] = Field(default_factory=dict)
+
+
 class Manifest(BaseModel):
     schema_version: int
     generated_at: datetime
@@ -39,4 +52,5 @@ class Manifest(BaseModel):
     h3_resolutions: list[int]
     altitude_bins: list[int]
     classifications: list[str]
+    classification_scales: dict[str, ClassificationScale] = Field(default_factory=dict)
 

@@ -35,6 +35,22 @@ export interface Manifest {
   h3_resolutions: number[];
   altitude_bins: number[];
   classifications: Classification[];
+  classification_scales?: Record<
+    Classification,
+    {
+      flight_count_max: number;
+      time_seconds_max: number;
+      by_resolution?: Record<
+        string,
+        {
+          flight_count_max: number;
+          time_seconds_max: number;
+          flight_count_p90: number;
+          time_seconds_p90: number;
+        }
+      >;
+    }
+  >;
 }
 
 export interface RenderableCell extends TileCell {

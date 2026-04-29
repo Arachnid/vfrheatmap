@@ -34,6 +34,7 @@ type BucketIndex = {
 };
 const TILE_CACHE_MAX = 512;
 const heatTileCache = new Map<string, HTMLCanvasElement>();
+const HEATMAP_SOFT_KNEE = 1.0;
 
 function lonToMercatorX(lon: number): number {
   return (lon + 180) / 360;
@@ -76,14 +77,16 @@ function tileBounds(tile: TileKey): ViewBounds {
 
 function colorForIntensity(intensity: number): [number, number, number, number] {
   const t = Math.max(0, Math.min(1, intensity));
-  // Matches the existing blue->orange ramp style.
+  // Wider multihue ramp with moderated opacity.
   const stops: Array<[number, number, number, number]> = [
-    [20, 60, 120, 35],
-    [45, 95, 160, 110],
-    [70, 140, 190, 165],
-    [130, 180, 140, 205],
-    [220, 170, 90, 230],
-    [255, 110, 45, 245],
+    [18, 22, 64, 8],
+    [33, 102, 172, 28],
+    [56, 182, 196, 52],
+    [80, 212, 104, 80],
+    [244, 227, 82, 104],
+    [250, 160, 62, 122],
+    [236, 86, 54, 138],
+    [198, 42, 132, 150],
   ];
   const scaled = t * (stops.length - 1);
   const i = Math.floor(scaled);
@@ -304,9 +307,11 @@ function buildInterpolatedImage(
         image[idx + 3] = 0;
         continue;
       }
-      const normalized = Math.max(0, Math.min(1, nearestValue / normalizationMax));
-      // Lift weak values so the layer stays visible while preserving gradients.
-      const shaped = Math.pow(normalized, 0.55);
+      const ratio = Math.max(0, nearestValue / normalizationMax);
+      // Soft-knee compression keeps top-end contrast instead of hard-clipping busy areas.
+      const compressed = ratio / (ratio + HEATMAP_SOFT_KNEE);
+      // Keep weaker values visible without over-saturating the map.
+      const shaped = Math.pow(compressed, 0.7);
       const [r, g, b, a] = colorForIntensity(shaped);
       const idx = (py * width + px) * 4;
       image[idx] = r;
@@ -353,17 +358,13 @@ function tileSignature(cells: RenderableCell[]): string {
   return `${cells.length}:${Math.round(metricSum)}:${Math.round(maxMetric)}`;
 }
 
-export function buildTrafficLayer(cells: RenderableCell[], visibleTiles: TileKey[]): BitmapLayer[] {
-  if (cells.length === 0 || visibleTiles.length === 0) {
+export function buildTrafficLayer(cells: RenderableCell[], visibleTiles: TileKey[], normalizationMax: number): BitmapLayer[] {
+  if (cells.length === 0 || visibleTiles.length === 0 || normalizationMax <= 0) {
     return [];
   }
-  const globalMax = cells.reduce((max, c) => Math.max(max, c.metricValue), 0);
-  if (globalMax <= 0) {
-    return [];
-  }
-  // Quantize autoscale to improve tile-cache hit rate while preserving viewport scaling behavior.
-  const scaleStep = Math.max(1, Math.round(globalMax * 0.05));
-  const normalizedScale = Math.max(scaleStep, Math.round(globalMax / scaleStep) * scaleStep);
+  // Quantize scale slightly for better cache hit rate while keeping perceived consistency.
+  const scaleStep = Math.max(1, Math.round(normalizationMax * 0.02));
+  const normalizedScale = Math.max(scaleStep, Math.round(normalizationMax / scaleStep) * scaleStep);
 
   const byTile = new Map<string, RenderableCell[]>();
   for (const cell of cells) {

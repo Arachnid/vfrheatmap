@@ -1,5 +1,6 @@
 import { MapboxOverlay } from "@deck.gl/mapbox";
 import type { Layer } from "@deck.gl/core";
+import { getResolution } from "h3-js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 
@@ -13,6 +14,8 @@ import type { Classification, Manifest, Metric, TileCell } from "./types";
 
 const tileManager = new TileManager();
 const SCHEMA_VERSION = 1;
+const HEATMAP_GLOBAL_SATURATION_FRACTION = 0.99;
+const H3_RESOLUTION_SCALE_FACTOR = 6;
 const AIRSPACE_TILE_TEMPLATE = "./data/airspace/tiles/z{z}/x{x}/y{y}.png";
 const AIRSPACE_BOUNDS: [number, number, number, number] = [-8, 49, 2, 61];
 const rasterStyle = (
@@ -240,6 +243,68 @@ export default function App() {
     () => filterCellsByAltitude(cells, Math.min(minBin, maxBin), Math.max(minBin, maxBin), metric),
     [cells, minBin, maxBin, metric]
   );
+  const dominantH3Resolution = useMemo(() => {
+    if (renderableCells.length === 0) {
+      return null;
+    }
+    const counts = new Map<number, number>();
+    for (const cell of renderableCells) {
+      const resolution = getResolution(cell.h3);
+      counts.set(resolution, (counts.get(resolution) ?? 0) + 1);
+    }
+    let dominant: number | null = null;
+    let bestCount = -1;
+    for (const [resolution, count] of counts.entries()) {
+      if (count > bestCount) {
+        bestCount = count;
+        dominant = resolution;
+      }
+    }
+    return dominant;
+  }, [renderableCells]);
+  const heatmapScaleMax = useMemo(() => {
+    if (manifest?.classification_scales) {
+      const targetResolution = dominantH3Resolution;
+      let maxPercentileFromManifest = 0;
+      let maxFromManifest = 0;
+      for (const classification of selectedClassifications) {
+        const scale = manifest.classification_scales[classification];
+        if (!scale) {
+          continue;
+        }
+        if (targetResolution !== null && targetResolution !== undefined) {
+          const perResolutionScale = scale.by_resolution?.[String(targetResolution)];
+          if (perResolutionScale) {
+            const percentileValue =
+              metric === "flight_count" ? perResolutionScale.flight_count_p90 : perResolutionScale.time_seconds_p90;
+            if (percentileValue > maxPercentileFromManifest) {
+              maxPercentileFromManifest = percentileValue;
+            }
+          }
+        }
+        const value = metric === "flight_count" ? scale.flight_count_max : scale.time_seconds_max;
+        if (value > maxFromManifest) {
+          maxFromManifest = value;
+        }
+      }
+      if (maxPercentileFromManifest > 0) {
+        return maxPercentileFromManifest * HEATMAP_GLOBAL_SATURATION_FRACTION;
+      }
+      if (maxFromManifest > 0) {
+        const baseResolution = Math.min(...manifest.h3_resolutions);
+        const fallbackResolution = dominantH3Resolution ?? baseResolution;
+        // Legacy fallback for manifests without per-resolution percentile scales.
+        // Scale denominator down as resolution increases so zoomed-in tiles stay visible.
+        const resolutionFactor = H3_RESOLUTION_SCALE_FACTOR ** (baseResolution - fallbackResolution);
+        return maxFromManifest * HEATMAP_GLOBAL_SATURATION_FRACTION * resolutionFactor;
+      }
+    }
+    const positiveValues = renderableCells.map((cell) => cell.metricValue).filter((value) => value > 0);
+    if (positiveValues.length === 0) {
+      return 0;
+    }
+    return positiveValues.reduce((max, value) => Math.max(max, value), 0);
+  }, [manifest, selectedClassifications, metric, renderableCells, dominantH3Resolution]);
   const flightsTotal = renderableCells.reduce((acc, cell) => acc + cell.selectedFlightCount, 0);
   const secondsTotal = renderableCells.reduce((acc, cell) => acc + cell.selectedTimeSeconds, 0);
 
@@ -248,7 +313,7 @@ export default function App() {
       return;
     }
     const layers: Layer[] = [];
-    const trafficLayers = buildTrafficLayer(renderableCells, visibleTiles);
+    const trafficLayers = buildTrafficLayer(renderableCells, visibleTiles, heatmapScaleMax);
     layers.push(...trafficLayers);
     console.debug("[app] updating deck layers", {
       renderableCells: renderableCells.length,
@@ -260,7 +325,7 @@ export default function App() {
       console.error("[app] failed to update deck layers", layerError);
       setError("Failed to render traffic layers");
     }
-  }, [renderableCells, visibleTiles]);
+  }, [renderableCells, visibleTiles, heatmapScaleMax]);
 
   if (error) {
     return <div className="p-4 text-sm text-red-700">{error}</div>;

@@ -4,6 +4,7 @@ import gzip
 import json
 import logging
 import math
+import random
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -14,8 +15,10 @@ import h3
 
 from adsb_vfr.tiles import SCHEMA_VERSION
 from adsb_vfr.tiles.airspace import write_airspace_outputs
-from adsb_vfr.tiles.models import AltBinValue, Manifest, TileCell, TilePayload
+from adsb_vfr.tiles.models import AltBinValue, ClassificationScale, Manifest, ResolutionScale, TileCell, TilePayload
 from adsb_vfr.tiles.tile_math import ZOOM_TO_H3_RESOLUTION, TileKey, h3_cell_to_tile
+
+SCALE_SAMPLE_SIZE = 200_000
 
 
 @dataclass(frozen=True)
@@ -179,6 +182,31 @@ def _write_tile_file(output_root: Path, classification: str, tile_key: TileKey, 
         logger.warning("Tile %s exceeds 200KB gz budget (%d bytes)", output_file, size)
 
 
+def _reservoir_add(sample: list[float], seen: int, value: float, rng: random.Random) -> int:
+    seen += 1
+    if len(sample) < SCALE_SAMPLE_SIZE:
+        sample.append(value)
+        return seen
+    idx = rng.randrange(seen)
+    if idx < SCALE_SAMPLE_SIZE:
+        sample[idx] = value
+    return seen
+
+
+def _percentile(values: list[float], quantile: float) -> float:
+    if not values:
+        return 0.0
+    sorted_values = sorted(values)
+    q = min(1.0, max(0.0, quantile))
+    index = q * (len(sorted_values) - 1)
+    low = int(math.floor(index))
+    high = int(math.ceil(index))
+    if low == high:
+        return float(sorted_values[low])
+    fraction = index - low
+    return float(sorted_values[low] + (sorted_values[high] - sorted_values[low]) * fraction)
+
+
 def build_tiles(config: BuildTilesConfig, logger: logging.Logger | None = None) -> None:
     log = logger or logging.getLogger(__name__)
     config.output_dir.mkdir(parents=True, exist_ok=True)
@@ -187,8 +215,23 @@ def build_tiles(config: BuildTilesConfig, logger: logging.Logger | None = None) 
     bbox = config.bbox or default_bbox
     altitude_bins: set[int] = set()
     available_resolutions = sorted(set(ZOOM_TO_H3_RESOLUTION.values()))
+    classification_scales: dict[str, ClassificationScale] = {}
+    rng = random.Random(20260429)
     for classification in ("vfr", "ifr", "unknown"):
         rows_by_res: dict[int, list[tuple[int, int, int, float, float, float, float, int]]] = {}
+        max_flight_count = 0.0
+        max_time_seconds = 0.0
+        scale_by_resolution: dict[int, dict[str, object]] = {
+            resolution: {
+                "flight_max": 0.0,
+                "time_max": 0.0,
+                "flight_sample": [],
+                "time_sample": [],
+                "flight_seen": 0,
+                "time_seen": 0,
+            }
+            for resolution in available_resolutions
+        }
         for resolution in (6, 7, 8, 9):
             table_name = _table_for(classification, resolution)
             rows_by_res[resolution] = _load_rows(conn, table_name)
@@ -209,7 +252,33 @@ def build_tiles(config: BuildTilesConfig, logger: logging.Logger | None = None) 
                     h3_resolution=resolution,
                     cells=cells,
                 )
+                for cell in cells:
+                    max_flight_count = max(max_flight_count, float(cell.flight_count))
+                    max_time_seconds = max(max_time_seconds, float(cell.time_seconds))
+                    stats = scale_by_resolution[resolution]
+                    stats["flight_max"] = max(float(stats["flight_max"]), float(cell.flight_count))
+                    stats["time_max"] = max(float(stats["time_max"]), float(cell.time_seconds))
+                    stats["flight_seen"] = _reservoir_add(
+                        stats["flight_sample"], int(stats["flight_seen"]), float(cell.flight_count), rng
+                    )
+                    stats["time_seen"] = _reservoir_add(
+                        stats["time_sample"], int(stats["time_seen"]), float(cell.time_seconds), rng
+                    )
                 _write_tile_file(config.output_dir, classification, tile_key, payload, logger=log)
+        by_resolution = {
+            str(resolution): ResolutionScale(
+                flight_count_max=float(stats["flight_max"]),
+                time_seconds_max=float(stats["time_max"]),
+                flight_count_p90=_percentile(stats["flight_sample"], 0.90),
+                time_seconds_p90=_percentile(stats["time_sample"], 0.90),
+            )
+            for resolution, stats in scale_by_resolution.items()
+        }
+        classification_scales[classification] = ClassificationScale(
+            flight_count_max=max_flight_count,
+            time_seconds_max=max_time_seconds,
+            by_resolution=by_resolution,
+        )
 
     write_airspace_outputs(
         output_dir=config.output_dir,
@@ -228,6 +297,7 @@ def build_tiles(config: BuildTilesConfig, logger: logging.Logger | None = None) 
         h3_resolutions=available_resolutions,
         altitude_bins=sorted(altitude_bins),
         classifications=["vfr", "ifr", "unknown"],
+        classification_scales=classification_scales,
     )
     with (config.output_dir / "manifest.json").open("w", encoding="utf-8") as handle:
         handle.write(manifest.model_dump_json(indent=2))
