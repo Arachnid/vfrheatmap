@@ -1,14 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 from typing import Sequence
 
 import numpy as np
 import xarray as xr
-
-from adsb_vfr.lib.altitude_bins import TRANSITION_ALTITUDE_FT
 
 
 @dataclass
@@ -23,7 +20,8 @@ class Era5Lookup:
         if len(datasets) == 1:
             ds = datasets[0]
         else:
-            ds = xr.combine_by_coords(datasets)
+            # Monthly files differ only in irrelevant global attrs (e.g. cfgrib `history` temp paths).
+            ds = xr.combine_by_coords(datasets, combine_attrs="drop")
         if "time" not in ds.coords and "valid_time" in ds.coords:
             ds = ds.rename({"valid_time": "time"})
         if "msl" not in ds:
@@ -45,15 +43,13 @@ class Era5Lookup:
         # well below METAR quantisation and our 100ft/500ft aggregation scale.
         return pressure_alt_ft + (mslp_hpa - 1013.25) * 27.3
 
-    def correct_altitudes(
+    def qnh_amsl_ft(
         self,
         pressure_alt_ft: np.ndarray,
         lats: np.ndarray,
         lons: np.ndarray,
         timestamps: np.ndarray,
     ) -> np.ndarray:
-        """MSLP-corrected altitude below transition; pressure altitude (1013.25 hPa) at/above."""
+        """MSLP-based AMSL (ft) at every altitude — ERA5 used as barometric correction."""
         mslp_hpa = self.lookup_hpa(lats=lats, lons=lons, timestamps=timestamps)
-        qnh_alt = self.pressure_to_qnh_alt_ft(pressure_alt_ft=pressure_alt_ft, mslp_hpa=mslp_hpa)
-        return np.where(pressure_alt_ft >= TRANSITION_ALTITUDE_FT, pressure_alt_ft, qnh_alt)
-
+        return self.pressure_to_qnh_alt_ft(pressure_alt_ft=pressure_alt_ft, mslp_hpa=mslp_hpa)

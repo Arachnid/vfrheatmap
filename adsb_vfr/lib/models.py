@@ -11,7 +11,7 @@ class PointRow:
     lat: float
     lon: float
     alt_pressure_ft: float
-    alt_qnh_ft: float
+    alt_qnh_amsl_ft: float
     ground_speed_kt: float
     track_deg: float
     squawk: str

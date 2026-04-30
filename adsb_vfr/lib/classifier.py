@@ -14,7 +14,7 @@ class SegmentFeatures:
     squawk: str
     icao_type: str
     emitter_category: str
-    max_alt_qnh_ft: float
+    max_alt_qnh_amsl_ft: float
     straightness: float
 
 

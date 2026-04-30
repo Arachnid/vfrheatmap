@@ -20,8 +20,8 @@ def test_pressure_to_qnh_formula() -> None:
     assert corrected[0] == 5000.0 + (10.0 * 27.3)
 
 
-def test_correct_altitudes_uses_pressure_altitude_at_or_above_transition() -> None:
-    """MSLP correction only below 3000 ft PA; at/above transition use uncorrected pressure altitude."""
+def test_qnh_amsl_ft_applies_mslp_at_all_pressure_altitudes() -> None:
+    """ERA5 MSLP correction applies at every pressure altitude (not only below transition)."""
     ds = xr.Dataset(
         {"msl": (("time", "latitude", "longitude"), np.ones((1, 1, 1), dtype=np.float64) * 102_325.0)},
         coords={
@@ -38,7 +38,7 @@ def test_correct_altitudes_uses_pressure_altitude_at_or_above_transition() -> No
         ["2025-01-01T00:00:00", "2025-01-01T00:00:00", "2025-01-01T00:00:00"],
         dtype="datetime64[ns]",
     )
-    out = lookup.correct_altitudes(pa, lats, lons, ts)
-    assert abs(float(out[0]) - (2000.0 + 10.0 * 27.3)) < 1e-6
-    assert abs(float(out[1]) - 3000.0) < 1e-9
-    assert abs(float(out[2]) - 5000.0) < 1e-9
+    out = lookup.qnh_amsl_ft(pa, lats, lons, ts)
+    expected_delta = 10.0 * 27.3
+    for i in range(3):
+        assert abs(float(out[i]) - (pa[i] + expected_delta)) < 1e-6

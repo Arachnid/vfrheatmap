@@ -190,25 +190,56 @@ async def ensure_trace_tarballs(
                 if release_day in needed_days:
                     releases_by_day[release_day] = release
 
-        unresolved = [day.isoformat() for day, _ in missing if day not in releases_by_day]
-        if unresolved:
-            sample = ", ".join(unresolved[:8])
-            raise FileNotFoundError(f"No matching GitHub release found for trace days: {sample}")
+        missing_release = [day for day, _ in missing if day not in releases_by_day]
+        if missing_release:
+            sorted_missing = sorted(missing_release)
+            sample = ", ".join(d.isoformat() for d in sorted_missing[:24])
+            more = f" (+{len(sorted_missing) - 24} more)" if len(sorted_missing) > 24 else ""
+            LOGGER.warning(
+                "No matching GitHub release for %d trace day(s); skipping: %s%s",
+                len(sorted_missing),
+                sample,
+                more,
+            )
+
+        to_fetch = [(day, path) for day, path in missing if day in releases_by_day]
 
         async def _download_one(day: date, target_path: Path) -> None:
             release = releases_by_day[day]
-            await _download_trace_release_to_tar(
-                client=client,
-                sem=sem,
-                day=day,
-                tar_path=target_path,
-                release=release,
-            )
+            try:
+                await _download_trace_release_to_tar(
+                    client=client,
+                    sem=sem,
+                    day=day,
+                    tar_path=target_path,
+                    release=release,
+                )
+            except Exception as exc:
+                LOGGER.warning(
+                    "Failed to download trace tarball for %s; skipping that day: %s",
+                    day.isoformat(),
+                    exc,
+                )
 
-        tasks = [_download_one(day=day, target_path=path) for day, path in missing]
-        for coro in tqdm(asyncio.as_completed(tasks), total=len(tasks), desc="Downloading traces"):
-            await coro
-    return trace_paths
+        tasks = [_download_one(day=day, target_path=path) for day, path in to_fetch]
+        if tasks:
+            for coro in tqdm(asyncio.as_completed(tasks), total=len(tasks), desc="Downloading traces"):
+                await coro
+
+    present = [(d, p) for d, p in trace_paths if p.exists()]
+    if not present:
+        raise FileNotFoundError(
+            "No trace tarballs available for the requested date range "
+            "(all days missing from cache and GitHub, or download failed)."
+        )
+    skipped = len(trace_paths) - len(present)
+    if skipped:
+        LOGGER.warning(
+            "Proceeding with %d trace day(s); skipped %d day(s) without usable trace data.",
+            len(present),
+            skipped,
+        )
+    return present
 
 
 def _ensure_cdsapi():

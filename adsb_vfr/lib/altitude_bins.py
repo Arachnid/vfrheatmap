@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-# Below this AMSL (ft), use 100 ft bins with MSLP-based altitude; at/above, use 500 ft bins and
-# pressure altitude (1013.25 hPa) — see Era5Lookup.correct_altitudes.
+# Below this AMSL (ft), use 100 ft bins; at/above transition use 500 ft bins (pressure-altitude style bands).
 TRANSITION_ALTITUDE_FT = 3000.0
 
 LOW_BAND_FT = 100.0

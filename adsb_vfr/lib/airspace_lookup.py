@@ -11,6 +11,7 @@ import shapely
 from shapely.geometry import shape
 from shapely.strtree import STRtree
 
+from adsb_vfr.lib.airspace_vertical import point_in_airspace_vertically
 from adsb_vfr.tiles.airspace import fetch_openaip_airspaces, parse_airspace_items
 
 LOGGER = logging.getLogger(__name__)
@@ -20,10 +21,21 @@ LOGGER = logging.getLogger(__name__)
 class AirspaceLookup:
     tree: STRtree | None
     classes: np.ndarray
+    lower_ft: np.ndarray
+    lower_ref: np.ndarray
+    upper_ft: np.ndarray
+    upper_ref: np.ndarray
 
     @classmethod
     def empty(cls) -> "AirspaceLookup":
-        return cls(tree=None, classes=np.array([], dtype=object))
+        return cls(
+            tree=None,
+            classes=np.array([], dtype=object),
+            lower_ft=np.array([], dtype=np.float64),
+            lower_ref=np.array([], dtype=object),
+            upper_ft=np.array([], dtype=np.float64),
+            upper_ref=np.array([], dtype=object),
+        )
 
     @classmethod
     def from_feature_collection(cls, feature_collection: dict[str, Any]) -> "AirspaceLookup":
@@ -32,6 +44,10 @@ class AirspaceLookup:
             return cls.empty()
         geoms = []
         classes: list[str] = []
+        lower_list: list[float] = []
+        lower_refs: list[str] = []
+        upper_list: list[float] = []
+        upper_refs: list[str] = []
         for feature in features:
             if not isinstance(feature, dict):
                 continue
@@ -48,16 +64,43 @@ class AirspaceLookup:
             geoms.append(geom)
             if isinstance(props, dict):
                 classes.append(str(props.get("class", "SPECIAL")).upper())
+                lf = props.get("lower_limit_ft")
+                lr = props.get("lower_limit_ref") or "UNKNOWN"
+                uf = props.get("upper_limit_ft")
+                ur = props.get("upper_limit_ref") or "UNKNOWN"
+                lower_list.append(float(lf) if lf is not None else np.nan)
+                lower_refs.append(str(lr).upper())
+                upper_list.append(float(uf) if uf is not None else np.nan)
+                upper_refs.append(str(ur).upper())
             else:
                 classes.append("SPECIAL")
+                lower_list.append(np.nan)
+                lower_refs.append("UNKNOWN")
+                upper_list.append(np.nan)
+                upper_refs.append("UNKNOWN")
         if not geoms:
             return cls.empty()
-        return cls(tree=STRtree(geoms), classes=np.array(classes, dtype=object))
+        return cls(
+            tree=STRtree(geoms),
+            classes=np.array(classes, dtype=object),
+            lower_ft=np.array(lower_list, dtype=np.float64),
+            lower_ref=np.array(lower_refs, dtype=object),
+            upper_ft=np.array(upper_list, dtype=np.float64),
+            upper_ref=np.array(upper_refs, dtype=object),
+        )
 
-    def flags_for_points(self, lats: np.ndarray, lons: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        in_class_a = np.zeros(len(lats), dtype=bool)
-        in_any_airspace = np.zeros(len(lats), dtype=bool)
-        if self.tree is None or len(lats) == 0:
+    def flags_for_points(
+        self,
+        lats: np.ndarray,
+        lons: np.ndarray,
+        alt_pressure_ft: np.ndarray,
+        alt_qnh_amsl_ft: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """2D footprint hit plus vertical band using FL vs AMSL datums per OpenAIP refs."""
+        n = len(lats)
+        in_class_a = np.zeros(n, dtype=bool)
+        in_any_airspace = np.zeros(n, dtype=bool)
+        if self.tree is None or n == 0:
             return in_class_a, in_any_airspace
         pts = shapely.points(lons, lats)
         matches = self.tree.query(pts, predicate="intersects")
@@ -65,11 +108,22 @@ class AirspaceLookup:
             return in_class_a, in_any_airspace
         point_idx = matches[0]
         poly_idx = matches[1]
-        in_any_airspace[np.unique(point_idx)] = True
-        if len(poly_idx):
-            class_hits = self.classes[poly_idx] == "A"
-            if np.any(class_hits):
-                in_class_a[np.unique(point_idx[class_hits])] = True
+        for i in range(len(point_idx)):
+            pi = int(point_idx[i])
+            pj = int(poly_idx[i])
+            lf = self.lower_ft[pj]
+            uf = self.upper_ft[pj]
+            lower_ft_i = None if (lf != lf or np.isnan(lf)) else int(round(float(lf)))
+            upper_ft_i = None if (uf != uf or np.isnan(uf)) else int(round(float(uf)))
+            lr = str(self.lower_ref[pj])
+            ur = str(self.upper_ref[pj])
+            pa = float(alt_pressure_ft[pi])
+            qa = float(alt_qnh_amsl_ft[pi])
+            if not point_in_airspace_vertically(pa, qa, lower_ft_i, lr, upper_ft_i, ur):
+                continue
+            in_any_airspace[pi] = True
+            if str(self.classes[pj]) == "A":
+                in_class_a[pi] = True
         return in_class_a, in_any_airspace
 
 
@@ -111,4 +165,3 @@ def load_airspace_lookup(
             )
             return AirspaceLookup.empty()
     return AirspaceLookup.from_feature_collection(feature_collection or {"type": "FeatureCollection", "features": []})
-

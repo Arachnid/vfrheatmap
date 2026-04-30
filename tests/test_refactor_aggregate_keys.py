@@ -21,8 +21,10 @@ def test_edge_to_cell_intersections_propagates_agg_date() -> None:
         "start_lon": lon1,
         "end_lat": lat2,
         "end_lon": lon2,
-        "start_alt_qnh_ft": 3000.0,
-        "end_alt_qnh_ft": 3000.0,
+        "start_alt_pressure_ft": 3000.0,
+        "end_alt_pressure_ft": 3000.0,
+        "start_alt_qnh_amsl_ft": 3000.0,
+        "end_alt_qnh_amsl_ft": 3000.0,
         "track_deg": 45.0,
         "ground_speed_kt": 90.0,
         "edge_duration_s": 60.0,
@@ -39,7 +41,7 @@ def test_add_aggregate_keys_sets_h3_and_classification_group() -> None:
         {
             "classification": "vfr_medium",
             "vehicle_class": "fixed_wing",
-            "alt_qnh_ft": 5000.0,
+            "alt_qnh_amsl_ft": 5000.0,
             "track_deg": 0.0,
             "ground_speed_kt": 80.0,
             "time_weight": 1.0,
@@ -56,7 +58,7 @@ def test_add_aggregate_keys_unknown_not_grouped() -> None:
         {
             "classification": "unknown",
             "vehicle_class": "fixed_wing",
-            "alt_qnh_ft": 5000.0,
+            "alt_qnh_amsl_ft": 5000.0,
             "track_deg": 0.0,
             "ground_speed_kt": 100.0,
             "time_weight": 1.0,
@@ -72,7 +74,7 @@ def test_add_aggregate_keys_helicopter_layer() -> None:
         {
             "classification": "ifr",
             "vehicle_class": "helicopter",
-            "alt_qnh_ft": 2000.0,
+            "alt_qnh_amsl_ft": 2000.0,
             "track_deg": 90.0,
             "ground_speed_kt": 100.0,
             "time_weight": 2.0,
@@ -88,7 +90,7 @@ def test_add_aggregate_keys_gyrocopter_uses_vfr_layer() -> None:
         {
             "classification": "vfr_medium",
             "vehicle_class": "gyrocopter",
-            "alt_qnh_ft": 500.0,
+            "alt_qnh_amsl_ft": 500.0,
             "track_deg": 0.0,
             "ground_speed_kt": 50.0,
             "time_weight": 1.0,

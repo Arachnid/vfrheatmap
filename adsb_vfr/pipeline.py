@@ -158,8 +158,8 @@ def parse_correct_flatmap(
         lats = np.array([r["lat"] for r in chunk], dtype=np.float64)
         lons = np.array([r["lon"] for r in chunk], dtype=np.float64)
         times = np.array([r["timestamp"] for r in chunk], dtype="datetime64[ns]")
-        alt_qnh = lookup.correct_altitudes(pressure_alt_ft=pressure, lats=lats, lons=lons, timestamps=times)
-        for row, corrected in zip(chunk, alt_qnh):
+        alt_amsl = lookup.qnh_amsl_ft(pressure_alt_ft=pressure, lats=lats, lons=lons, timestamps=times)
+        for row, qnh_amsl in zip(chunk, alt_amsl):
             out_rows.append(
                 {
                     "trace_date": str(item["date"]),
@@ -167,8 +167,8 @@ def parse_correct_flatmap(
                     "timestamp": row["timestamp"],
                     "lat": row["lat"],
                     "lon": row["lon"],
-                    "alt_pressure_ft": row["alt_pressure_ft"],
-                    "alt_qnh_ft": float(corrected),
+                    "alt_pressure_ft": float(row["alt_pressure_ft"]),
+                    "alt_qnh_amsl_ft": float(qnh_amsl),
                     "ground_speed_kt": row["ground_speed_kt"],
                     "track_deg": row["track_deg"],
                     "squawk": row["squawk"],
@@ -229,6 +229,8 @@ def _build_edge_rows(
             class_a_hits, any_airspace_hits = resolved_airspace_lookup.flags_for_points(
                 lats=g["lat"].to_numpy(dtype=np.float64),
                 lons=g["lon"].to_numpy(dtype=np.float64),
+                alt_pressure_ft=g["alt_pressure_ft"].to_numpy(dtype=np.float64),
+                alt_qnh_amsl_ft=g["alt_qnh_amsl_ft"].to_numpy(dtype=np.float64),
             )
             g["in_class_a"] = class_a_hits
             g["in_any_airspace"] = any_airspace_hits
@@ -269,7 +271,7 @@ def _build_edge_rows(
                 squawk=str(seg.iloc[-1]["squawk"]),
                 icao_type=str(seg.iloc[-1]["icao_type"]),
                 emitter_category=str(seg.iloc[-1]["emitter_category"]),
-                max_alt_qnh_ft=float(seg["alt_qnh_ft"].max()),
+                max_alt_qnh_amsl_ft=float(seg["alt_qnh_amsl_ft"].max()),
                 straightness=0.0,
             )
             base_classification, vehicle_class = classify_segment(features, classifier_config)
@@ -378,8 +380,10 @@ def _build_edge_rows(
                         "start_lon": float(p1["lon"]),
                         "end_lat": float(p2["lat"]),
                         "end_lon": float(p2["lon"]),
-                        "start_alt_qnh_ft": float(p1["alt_qnh_ft"]),
-                        "end_alt_qnh_ft": float(p2["alt_qnh_ft"]),
+                        "start_alt_pressure_ft": float(p1["alt_pressure_ft"]),
+                        "end_alt_pressure_ft": float(p2["alt_pressure_ft"]),
+                        "start_alt_qnh_amsl_ft": float(p1["alt_qnh_amsl_ft"]),
+                        "end_alt_qnh_amsl_ft": float(p2["alt_qnh_amsl_ft"]),
                         "track_deg": track_deg,
                         "ground_speed_kt": ground_speed_kt,
                         "edge_duration_s": duration,
@@ -502,12 +506,17 @@ def edge_to_cell_intersections(edge: dict[str, Any]) -> list[dict[str, Any]]:
         intersections.append((start_cell, float(line.length), 0.5, float(midpoint.y), float(midpoint.x)))
         total_intersection_length = float(line.length)
 
-    start_alt = float(edge["start_alt_qnh_ft"])
-    alt_delta = float(edge["end_alt_qnh_ft"]) - start_alt
+    start_p = float(edge["start_alt_pressure_ft"])
+    end_p = float(edge["end_alt_pressure_ft"])
+    start_q = float(edge["start_alt_qnh_amsl_ft"])
+    end_q = float(edge["end_alt_qnh_amsl_ft"])
+    delta_p = end_p - start_p
+    delta_q = end_q - start_q
     out: list[dict[str, Any]] = []
     denom = max(total_intersection_length, 1e-9)
     for cell, seg_len, frac, lat_mid, lon_mid in intersections:
-        alt = start_alt + alt_delta * frac
+        alt_p = start_p + delta_p * frac
+        alt_q = start_q + delta_q * frac
         out.append(
             {
                 "segment_id": int(edge["segment_id"]),
@@ -516,7 +525,8 @@ def edge_to_cell_intersections(edge: dict[str, Any]) -> list[dict[str, Any]]:
                 "vehicle_class": str(edge["vehicle_class"]),
                 "lat": lat_mid,
                 "lon": lon_mid,
-                "alt_qnh_ft": alt,
+                "alt_pressure_ft": alt_p,
+                "alt_qnh_amsl_ft": alt_q,
                 "track_deg": float(edge["track_deg"]),
                 "ground_speed_kt": float(edge["ground_speed_kt"]),
                 "time_weight": duration * (seg_len / denom),
