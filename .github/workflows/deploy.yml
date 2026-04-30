@@ -17,38 +17,16 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:
-      PYTHONUNBUFFERED: "1"
-      TILE_DB_PATH: output/aggregates.duckdb
-      DUCKDB_RELEASE_URL: ${{ vars.DUCKDB_RELEASE_URL }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install Python project
-        run: pip install -e .
-
-      - name: Download DuckDB from release (default)
-        if: env.DUCKDB_RELEASE_URL != ''
+      - name: Verify committed static data
         run: |
-          mkdir -p output
-          curl -L "$DUCKDB_RELEASE_URL" -o "$TILE_DB_PATH"
-
-      - name: Pull LFS objects (optional)
-        if: env.DUCKDB_RELEASE_URL == ''
-        run: |
-          git lfs pull
-          test -f "$TILE_DB_PATH"
-
-      - name: Build static data
-        run: |
-          printf '%s\n' "${{ secrets.OPENAIP_API_KEY }}" > .openaip-api-key
-          adsb-vfr build-tiles --input "$TILE_DB_PATH" --output-dir web/public/data
+          test -f web/public/data/manifest.json || (
+            echo "::error::Missing web/public/data/manifest.json — run build-tiles locally, commit web/public/data/, then push."
+            exit 1
+          )
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -60,7 +38,8 @@ jobs:
       - name: Install and build web app
         working-directory: web
         env:
-          VITE_BASE_PATH: /${{ github.event.repository.name }}/
+          # Site served at domain root (apex GitHub Pages, custom domain, or user/org root site)
+          VITE_BASE_PATH: /
         run: |
           npm install
           npm run build

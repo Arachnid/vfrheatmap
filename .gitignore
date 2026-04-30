@@ -26,7 +26,6 @@ htmlcov/
 # Runtime and data outputs
 cache/
 output/
-web/public/data/
 web/dist/
 .openaip-api-key
 

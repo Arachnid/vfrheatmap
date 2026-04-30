@@ -108,22 +108,20 @@ npm run build
 
 `web/public/data/` is populated by `adsb-vfr build-tiles`.
 
+For **GitHub Pages**, commit `web/public/data/` (manifest, tiles, airspace outputs) after building locally. Large trees may need **Git LFS**.
+
 ## GitHub Pages Deployment
 
 Workflow: `.github/workflows/deploy.yml`
 
 On push to `main`, it:
-1. Installs Python project.
-2. Retrieves DuckDB (release URL by default, LFS fallback).
-3. Runs `adsb-vfr build-tiles`.
-4. Builds `web/dist`.
-5. Deploys via `actions/deploy-pages`.
+1. Checks that `web/public/data/manifest.json` exists (run `build-tiles` locally first).
+2. Builds `web/dist` with **`VITE_BASE_PATH=/`** so assets work at the **root of your domain** (apex Pages site, `username.github.io`, or a custom domain without a path prefix).
+3. Deploys via `actions/deploy-pages`.
 
-Required secret:
-- `OPENAIP_API_KEY`
+No CI secrets are required for deploy. Configure **Pages → Build: GitHub Actions** in the repo settings. For a **custom domain**, add it under Pages and optionally put a `CNAME` file in `web/public/`.
 
-Optional repo variable:
-- `DUCKDB_RELEASE_URL` (if empty, workflow expects Git LFS file at `output/aggregates.duckdb`).
+If the site is served under a **subpath** instead (e.g. `github.io/<repo>/`), set `VITE_BASE_PATH` in the workflow to that path (with trailing slash).
 
 ## Methodology Notes and Caveats
 

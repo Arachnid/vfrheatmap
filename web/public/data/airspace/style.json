@@ -1,0 +1,90 @@
+{
+  "render_mode": "raster_tiles",
+  "tile_url_template": "./data/airspace/tiles/z{z}/x{x}/y{y}.png",
+  "bounds": [
+    -8.0,
+    49.0,
+    2.0,
+    61.0
+  ],
+  "minzoom": 5,
+  "maxzoom": 11,
+  "attribution": "\u00a9 OpenAIP",
+  "vector_fallback_style": {
+    "CTR": {
+      "line_color": "#2563eb",
+      "line_dash": [],
+      "fill_color": "#60a5fa",
+      "fill_opacity": 0.1,
+      "label": true
+    },
+    "CTA": {
+      "line_color": "#2563eb",
+      "line_dash": [
+        2,
+        2
+      ],
+      "fill_color": "#93c5fd",
+      "fill_opacity": 0.08,
+      "label": true
+    },
+    "TMA": {
+      "line_color": "#1d4ed8",
+      "line_dash": [
+        2,
+        2
+      ],
+      "fill_color": "#bfdbfe",
+      "fill_opacity": 0.06,
+      "label": true
+    },
+    "MATZ": {
+      "line_color": "#a21caf",
+      "line_dash": [],
+      "fill_color": "#e879f9",
+      "fill_opacity": 0.1,
+      "label": true
+    },
+    "ATZ": {
+      "line_color": "#0ea5e9",
+      "line_dash": [],
+      "fill_color": "#7dd3fc",
+      "fill_opacity": 0.08,
+      "label": false
+    },
+    "DANGER": {
+      "line_color": "#dc2626",
+      "line_dash": [
+        1,
+        2
+      ],
+      "fill_color": "#ef4444",
+      "fill_opacity": 0.12,
+      "label": true
+    },
+    "RESTRICTED": {
+      "line_color": "#b91c1c",
+      "line_dash": [],
+      "fill_color": "#dc2626",
+      "fill_opacity": 0.2,
+      "label": true
+    },
+    "PROHIBITED": {
+      "line_color": "#7f1d1d",
+      "line_dash": [],
+      "fill_color": "#b91c1c",
+      "fill_opacity": 0.2,
+      "label": true
+    },
+    "AIAA": {
+      "line_color": "#4b5563",
+      "line_dash": [
+        4,
+        2
+      ],
+      "fill_color": "#9ca3af",
+      "fill_opacity": 0.08,
+      "label": false
+    }
+  }
+}
