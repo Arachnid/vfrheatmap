@@ -6,7 +6,7 @@ import maplibregl from "maplibre-gl";
 
 import { BottomBar } from "./components/BottomBar";
 import { ControlPanel } from "./components/ControlPanel";
-import { buildTrafficLayer } from "./layers/traffic";
+import { buildTrafficLayersAsync } from "./layers/traffic";
 import { cellsWithMetric } from "./tiles/filter";
 import { TileManager } from "./tiles/manager";
 import { tilesForViewport, type TileKey } from "./tiles/tileMath";
@@ -307,19 +307,34 @@ export default function App() {
     if (!overlayRef.current) {
       return;
     }
-    const layers: Layer[] = [];
-    const trafficLayers = buildTrafficLayer(renderableCells, visibleTiles, heatmapScaleMax);
-    layers.push(...trafficLayers);
-    console.debug("[app] updating deck layers", {
-      renderableCells: renderableCells.length,
-      layerCount: layers.length,
-    });
-    try {
-      overlayRef.current.setProps({ layers });
-    } catch (layerError) {
-      console.error("[app] failed to update deck layers", layerError);
-      setError("Failed to render traffic layers");
-    }
+    const overlay = overlayRef.current;
+    const controller = new AbortController();
+
+    buildTrafficLayersAsync(renderableCells, visibleTiles, heatmapScaleMax, controller.signal)
+      .then((trafficLayers) => {
+        if (controller.signal.aborted) {
+          return;
+        }
+        console.debug("[app] updating deck layers", {
+          renderableCells: renderableCells.length,
+          layerCount: trafficLayers.length,
+        });
+        try {
+          overlay.setProps({ layers: trafficLayers });
+        } catch (layerError) {
+          console.error("[app] failed to update deck layers", layerError);
+          setError("Failed to render traffic layers");
+        }
+      })
+      .catch((reason: unknown) => {
+        if (reason instanceof DOMException && reason.name === "AbortError") {
+          return;
+        }
+        console.error("[app] traffic layer worker failed", reason);
+        setError("Failed to render traffic layers");
+      });
+
+    return () => controller.abort();
   }, [renderableCells, visibleTiles, heatmapScaleMax]);
 
   if (error) {
