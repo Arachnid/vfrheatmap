@@ -20,6 +20,9 @@ venv/
 coverage.xml
 htmlcov/
 
+# Local logs
+*.log
+
 # Runtime and data outputs
 cache/
 output/
