@@ -125,7 +125,9 @@ export default function App() {
       attributionControl: {},
     });
     mapRef.current = map;
-    const overlay = new MapboxOverlay({ interleaved: true, layers: [] });
+    // Non-interleaved: separate Deck canvas avoids periodic double-composite with MapLibre when
+    // layer groups lag rapid heat updates (would darken semi-transparent BitmapLayers).
+    const overlay = new MapboxOverlay({ interleaved: false, layers: [] });
     overlayRef.current = overlay;
     map.addControl(overlay);
     const reloadTiles = async () => {
@@ -161,23 +163,36 @@ export default function App() {
       }
     };
     reloadTilesRef.current = reloadTiles;
+
+    const MOVE_TILE_RELOAD_MS = 80;
+    let lastMoveTileReload = 0;
+
+    const runReloadTiles = (label: string) => {
+      reloadTiles().catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+        console.error(`[app] tile load failed (${label})`, error);
+        setError("Failed to load tile data");
+      });
+    };
+
+    const reloadTilesOnMove = () => {
+      const now = Date.now();
+      if (now - lastMoveTileReload < MOVE_TILE_RELOAD_MS) {
+        return;
+      }
+      lastMoveTileReload = now;
+      runReloadTiles("move");
+    };
+
     map.on("load", () => {
-      reloadTiles().catch((error: unknown) => {
-        if (error instanceof DOMException && error.name === "AbortError") {
-          return;
-        }
-        console.error("[app] tile load failed on map load", error);
-        setError("Failed to load tile data");
-      });
+      runReloadTiles("load");
     });
+    map.on("move", reloadTilesOnMove);
     map.on("moveend", () => {
-      reloadTiles().catch((error: unknown) => {
-        if (error instanceof DOMException && error.name === "AbortError") {
-          return;
-        }
-        console.error("[app] tile load failed on moveend", error);
-        setError("Failed to load tile data");
-      });
+      lastMoveTileReload = Date.now();
+      runReloadTiles("moveend");
     });
     return () => {
       reloadTilesRef.current = null;
@@ -310,7 +325,16 @@ export default function App() {
     const overlay = overlayRef.current;
     const controller = new AbortController();
 
-    buildTrafficLayersAsync(renderableCells, visibleTiles, heatmapScaleMax, controller.signal)
+    buildTrafficLayersAsync(renderableCells, visibleTiles, heatmapScaleMax, controller.signal, (partialLayers) => {
+      if (controller.signal.aborted || !overlayRef.current) {
+        return;
+      }
+      try {
+        overlayRef.current.setProps({ layers: partialLayers });
+      } catch (layerError) {
+        console.error("[app] failed to set partial traffic layers", layerError);
+      }
+    })
       .then((trafficLayers) => {
         if (controller.signal.aborted) {
           return;

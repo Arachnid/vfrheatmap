@@ -48,6 +48,92 @@ function tileBounds(tile: TileKey): ViewBounds {
 const TILE_CACHE_MAX = 512;
 const heatTileCache = new Map<string, HTMLCanvasElement>();
 
+/** Last rendered heat canvas per slippy tile `z/x/y` (for stale display while a new raster runs). */
+const lastHeatCanvasByTileSlot = new Map<string, HTMLCanvasElement>();
+
+/** Max `child.z - ancestor.z` for using a lower-zoom tile as a placeholder image (avoids always hitting a distant z6 tile from the first view). */
+const MAX_ANCESTOR_DELTA_Z = 3;
+
+function tileSlotKey(tile: TileKey): string {
+  return `${tile.z}/${tile.x}/${tile.y}`;
+}
+
+/** Cache keys look like `z/x/y:signature…:scale123` where the signature may contain `:`. */
+function slotKeyFromCacheKey(cacheKey: string): string | null {
+  const match = /^(\d+\/\d+\/\d+):/.exec(cacheKey);
+  return match ? match[1] : null;
+}
+
+function rememberSlotCanvas(tile: TileKey, canvas: HTMLCanvasElement): void {
+  lastHeatCanvasByTileSlot.set(tileSlotKey(tile), canvas);
+}
+
+function parentTile(tile: TileKey): TileKey {
+  return { z: tile.z - 1, x: tile.x >> 1, y: tile.y >> 1 };
+}
+
+/**
+ * Extract the sub-rectangle of `source` that covers `child` when `source` is a full tile raster
+ * for `ancestor` (child is a descendant in the slippy pyramid).
+ */
+function cropChildFromAncestorCanvas(
+  child: TileKey,
+  ancestor: TileKey,
+  source: HTMLCanvasElement
+): HTMLCanvasElement | null {
+  const dz = child.z - ancestor.z;
+  const grid = 1 << dz;
+  const W = source.width;
+  const H = source.height;
+  const ox = child.x - (ancestor.x << dz);
+  const oy = child.y - (ancestor.y << dz);
+  const sw = W / grid;
+  const sh = H / grid;
+  const sx = (ox * W) / grid;
+  const sy = (oy * H) / grid;
+  const outW = Math.max(1, Math.round(sw));
+  const outH = Math.max(1, Math.round(sh));
+  const out = document.createElement("canvas");
+  out.width = outW;
+  out.height = outH;
+  const ctx = out.getContext("2d", { colorSpace: "srgb" });
+  if (!ctx) {
+    return null;
+  }
+  ctx.drawImage(source, sx, sy, sw, sh, 0, 0, outW, outH);
+  return out;
+}
+
+/**
+ * Exact-slot heat if present; otherwise a crop from the finest loaded ancestor (lower zoom) within
+ * `MAX_ANCESTOR_DELTA_Z`, so zoom-in reuses parent heat but we do not always mask the loading pattern
+ * with a very old low-zoom tile from the first view.
+ */
+function heatCanvasForPendingTile(tile: TileKey): HTMLCanvasElement | null {
+  const exact = lastHeatCanvasByTileSlot.get(tileSlotKey(tile));
+  if (exact) {
+    return exact;
+  }
+  let ancestor = parentTile(tile);
+  while (ancestor.z >= 0) {
+    const dz = tile.z - ancestor.z;
+    if (dz <= MAX_ANCESTOR_DELTA_Z) {
+      const canvas = lastHeatCanvasByTileSlot.get(tileSlotKey(ancestor));
+      if (canvas) {
+        const cropped = cropChildFromAncestorCanvas(tile, ancestor, canvas);
+        if (cropped) {
+          return cropped;
+        }
+      }
+    }
+    if (ancestor.z === 0) {
+      break;
+    }
+    ancestor = parentTile(ancestor);
+  }
+  return null;
+}
+
 let nextRequestId = 0;
 let workerInstance: Worker | null = null;
 
@@ -60,8 +146,14 @@ function getWorker(): Worker {
 
 function evictOldestCacheEntry(): void {
   const oldest = heatTileCache.keys().next().value as string | undefined;
-  if (oldest) {
-    heatTileCache.delete(oldest);
+  if (!oldest) {
+    return;
+  }
+  const canvas = heatTileCache.get(oldest);
+  heatTileCache.delete(oldest);
+  const slot = slotKeyFromCacheKey(oldest);
+  if (slot && canvas && lastHeatCanvasByTileSlot.get(slot) === canvas) {
+    lastHeatCanvasByTileSlot.delete(slot);
   }
 }
 
@@ -76,6 +168,10 @@ function touchCache(key: string): HTMLCanvasElement | undefined {
 
 function putCache(key: string, canvas: HTMLCanvasElement): void {
   heatTileCache.set(key, canvas);
+  const slot = slotKeyFromCacheKey(key);
+  if (slot) {
+    lastHeatCanvasByTileSlot.set(slot, canvas);
+  }
   while (heatTileCache.size > TILE_CACHE_MAX) {
     evictOldestCacheEntry();
   }
@@ -126,6 +222,44 @@ const bitmapLayerProps = {
   parameters: { depthTest: false },
 };
 
+/** Single shared texture for tiles still rasterizing in the worker. */
+let loadingPatternCanvas: HTMLCanvasElement | null = null;
+
+function getLoadingPatternCanvas(): HTMLCanvasElement {
+  if (!loadingPatternCanvas) {
+    const size = 40;
+    const c = document.createElement("canvas");
+    c.width = size;
+    c.height = size;
+    const ctx = c.getContext("2d", { colorSpace: "srgb" });
+    if (ctx) {
+      ctx.fillStyle = "rgba(226, 232, 240, 0.42)";
+      ctx.fillRect(0, 0, size, size);
+      ctx.strokeStyle = "rgba(148, 163, 184, 0.55)";
+      ctx.lineWidth = 1.5;
+      const step = 8;
+      for (let i = -size; i < size * 2; i += step) {
+        ctx.beginPath();
+        ctx.moveTo(i, 0);
+        ctx.lineTo(i + size, size);
+        ctx.stroke();
+      }
+    }
+    loadingPatternCanvas = c;
+  }
+  return loadingPatternCanvas;
+}
+
+function makePlaceholderLayer(tile: TileKey, bounds: ViewBounds): BitmapLayer {
+  return new BitmapLayer({
+    id: `traffic-loading-${tile.z}-${tile.x}-${tile.y}`,
+    image: getLoadingPatternCanvas(),
+    bounds: [bounds.west, bounds.south, bounds.east, bounds.north],
+    tintColor: [235, 242, 252],
+    ...bitmapLayerProps,
+  });
+}
+
 function makeBitmapLayer(
   tile: TileKey,
   bounds: ViewBounds,
@@ -137,6 +271,26 @@ function makeBitmapLayer(
     bounds: [bounds.west, bounds.south, bounds.east, bounds.north],
     ...bitmapLayerProps,
   });
+}
+
+function buildPartialLayersWithPlaceholders(ordered: OrderedTile[], jobs: TrafficRasterJob[]): BitmapLayer[] {
+  const pendingKeys = new Set(jobs.map((j) => j.cacheKey));
+  const layers: BitmapLayer[] = [];
+  for (const item of ordered) {
+    const cached = touchCache(item.cacheKey);
+    if (cached) {
+      rememberSlotCanvas(item.tile, cached);
+      layers.push(makeBitmapLayer(item.tile, item.bounds, cached));
+    } else if (pendingKeys.has(item.cacheKey)) {
+      const fallback = heatCanvasForPendingTile(item.tile);
+      if (fallback) {
+        layers.push(makeBitmapLayer(item.tile, item.bounds, fallback));
+      } else {
+        layers.push(makePlaceholderLayer(item.tile, item.bounds));
+      }
+    }
+  }
+  return layers;
 }
 
 function collectOrderedTiles(
@@ -188,7 +342,8 @@ export async function buildTrafficLayersAsync(
   cells: RenderableCell[],
   visibleTiles: TileKey[],
   normalizationMax: number,
-  signal: AbortSignal
+  signal: AbortSignal,
+  onPartialLayers?: (layers: BitmapLayer[]) => void
 ): Promise<BitmapLayer[]> {
   if (cells.length === 0 || visibleTiles.length === 0 || normalizationMax <= 0) {
     return [];
@@ -217,6 +372,10 @@ export async function buildTrafficLayersAsync(
     });
   }
 
+  if (onPartialLayers && !signal.aborted) {
+    onPartialLayers(buildPartialLayersWithPlaceholders(ordered, jobs));
+  }
+
   let freshTiles = new Map<string, HTMLCanvasElement>();
 
   if (jobs.length > 0) {
@@ -224,34 +383,49 @@ export async function buildTrafficLayersAsync(
     const requestId = ++nextRequestId;
     const payload: TrafficRasterRequest = { requestId, jobs };
 
-    freshTiles = await new Promise<Map<string, HTMLCanvasElement>>((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       const onAbort = () => {
         worker.removeEventListener("message", onMessage);
         reject(new DOMException("Aborted", "AbortError"));
       };
 
-      const onMessage = (event: MessageEvent<{ requestId: number; layers: Array<{ cacheKey: string; bitmap: ImageBitmap }> }>) => {
-        const { requestId: rid, layers } = event.data;
+      const onMessage = (
+        event: MessageEvent<
+          | { requestId: number; layer: { cacheKey: string; bitmap: ImageBitmap } }
+          | { requestId: number; done: true }
+        >
+      ) => {
+        const data = event.data;
+        const rid = data.requestId;
         if (rid !== requestId) {
-          for (const L of layers) {
-            L.bitmap.close();
+          if ("layer" in data && data.layer) {
+            data.layer.bitmap.close();
           }
           return;
         }
-        worker.removeEventListener("message", onMessage);
-        signal.removeEventListener("abort", onAbort);
-        if (signal.aborted) {
-          for (const L of layers) {
-            L.bitmap.close();
+        if ("layer" in data && data.layer) {
+          const { bitmap } = data.layer;
+          if (signal.aborted) {
+            bitmap.close();
+            return;
           }
-          reject(new DOMException("Aborted", "AbortError"));
+          const canvas = imageBitmapToCanvas(bitmap);
+          putCache(data.layer.cacheKey, canvas);
+          freshTiles.set(data.layer.cacheKey, canvas);
+          if (onPartialLayers && !signal.aborted) {
+            onPartialLayers(buildPartialLayersWithPlaceholders(ordered, jobs));
+          }
           return;
         }
-        const out = new Map<string, HTMLCanvasElement>();
-        for (const L of layers) {
-          out.set(L.cacheKey, imageBitmapToCanvas(L.bitmap));
+        if ("done" in data && data.done) {
+          worker.removeEventListener("message", onMessage);
+          signal.removeEventListener("abort", onAbort);
+          if (signal.aborted) {
+            reject(new DOMException("Aborted", "AbortError"));
+            return;
+          }
+          resolve();
         }
-        resolve(out);
       };
 
       signal.addEventListener("abort", onAbort, { once: true });
@@ -272,6 +446,8 @@ export async function buildTrafficLayersAsync(
       if (canvas) {
         putCache(item.cacheKey, canvas);
       }
+    } else {
+      rememberSlotCanvas(item.tile, canvas);
     }
     if (!canvas) {
       continue;
