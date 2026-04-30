@@ -4,8 +4,16 @@ import { cellToLatLng } from "h3-js";
 import type { ViewBounds } from "./trafficRasterCore";
 import TrafficWorker from "./traffic.worker?worker";
 import type { TrafficRasterJob, TrafficRasterRequest } from "./traffic.worker";
-import type { RenderableCell } from "../types";
+import type { Classification, RenderableCell } from "../types";
 import type { TileKey } from "../tiles/tileMath";
+
+/** Stable key for heat caches so VFR vs IFR vs combined selections never share raster entries. */
+export function trafficLayerCacheKey(classifications: readonly Classification[]): string {
+  if (classifications.length === 0) {
+    return "_none";
+  }
+  return [...classifications].sort().join(",");
+}
 
 function normalizeBounds(bounds: ViewBounds): ViewBounds {
   return {
@@ -48,24 +56,24 @@ function tileBounds(tile: TileKey): ViewBounds {
 const TILE_CACHE_MAX = 512;
 const heatTileCache = new Map<string, HTMLCanvasElement>();
 
-/** Last rendered heat canvas per slippy tile `z/x/y` (for stale display while a new raster runs). */
+/** Last rendered heat canvas per classification mix + slippy tile `layerKey|z/x/y`. */
 const lastHeatCanvasByTileSlot = new Map<string, HTMLCanvasElement>();
 
 /** Max `child.z - ancestor.z` for using a lower-zoom tile as a placeholder image (avoids always hitting a distant z6 tile from the first view). */
 const MAX_ANCESTOR_DELTA_Z = 3;
 
-function tileSlotKey(tile: TileKey): string {
-  return `${tile.z}/${tile.x}/${tile.y}`;
+function tileSlotKey(layerKey: string, tile: TileKey): string {
+  return `${layerKey}|${tile.z}/${tile.x}/${tile.y}`;
 }
 
-/** Cache keys look like `z/x/y:signature…:scale123` where the signature may contain `:`. */
+/** Cache keys look like `layerKey|z/x/y:signature…:scale123`; signature may contain `:`. */
 function slotKeyFromCacheKey(cacheKey: string): string | null {
-  const match = /^(\d+\/\d+\/\d+):/.exec(cacheKey);
-  return match ? match[1] : null;
+  const match = /^([^|]+)\|(\d+\/\d+\/\d+):/.exec(cacheKey);
+  return match ? `${match[1]}|${match[2]}` : null;
 }
 
-function rememberSlotCanvas(tile: TileKey, canvas: HTMLCanvasElement): void {
-  lastHeatCanvasByTileSlot.set(tileSlotKey(tile), canvas);
+function rememberSlotCanvas(layerKey: string, tile: TileKey, canvas: HTMLCanvasElement): void {
+  lastHeatCanvasByTileSlot.set(tileSlotKey(layerKey, tile), canvas);
 }
 
 function parentTile(tile: TileKey): TileKey {
@@ -109,8 +117,8 @@ function cropChildFromAncestorCanvas(
  * `MAX_ANCESTOR_DELTA_Z`, so zoom-in reuses parent heat but we do not always mask the loading pattern
  * with a very old low-zoom tile from the first view.
  */
-function heatCanvasForPendingTile(tile: TileKey): HTMLCanvasElement | null {
-  const exact = lastHeatCanvasByTileSlot.get(tileSlotKey(tile));
+function heatCanvasForPendingTile(layerKey: string, tile: TileKey): HTMLCanvasElement | null {
+  const exact = lastHeatCanvasByTileSlot.get(tileSlotKey(layerKey, tile));
   if (exact) {
     return exact;
   }
@@ -118,7 +126,7 @@ function heatCanvasForPendingTile(tile: TileKey): HTMLCanvasElement | null {
   while (ancestor.z >= 0) {
     const dz = tile.z - ancestor.z;
     if (dz <= MAX_ANCESTOR_DELTA_Z) {
-      const canvas = lastHeatCanvasByTileSlot.get(tileSlotKey(ancestor));
+      const canvas = lastHeatCanvasByTileSlot.get(tileSlotKey(layerKey, ancestor));
       if (canvas) {
         const cropped = cropChildFromAncestorCanvas(tile, ancestor, canvas);
         if (cropped) {
@@ -273,16 +281,20 @@ function makeBitmapLayer(
   });
 }
 
-function buildPartialLayersWithPlaceholders(ordered: OrderedTile[], jobs: TrafficRasterJob[]): BitmapLayer[] {
+function buildPartialLayersWithPlaceholders(
+  layerKey: string,
+  ordered: OrderedTile[],
+  jobs: TrafficRasterJob[]
+): BitmapLayer[] {
   const pendingKeys = new Set(jobs.map((j) => j.cacheKey));
   const layers: BitmapLayer[] = [];
   for (const item of ordered) {
     const cached = touchCache(item.cacheKey);
     if (cached) {
-      rememberSlotCanvas(item.tile, cached);
+      rememberSlotCanvas(layerKey, item.tile, cached);
       layers.push(makeBitmapLayer(item.tile, item.bounds, cached));
     } else if (pendingKeys.has(item.cacheKey)) {
-      const fallback = heatCanvasForPendingTile(item.tile);
+      const fallback = heatCanvasForPendingTile(layerKey, item.tile);
       if (fallback) {
         layers.push(makeBitmapLayer(item.tile, item.bounds, fallback));
       } else {
@@ -294,6 +306,7 @@ function buildPartialLayersWithPlaceholders(ordered: OrderedTile[], jobs: Traffi
 }
 
 function collectOrderedTiles(
+  layerKey: string,
   cells: RenderableCell[],
   visibleTiles: TileKey[],
   normalizedScale: number
@@ -328,7 +341,7 @@ function collectOrderedTiles(
     if (candidates.length === 0) {
       continue;
     }
-    const cacheKey = `${tile.z}/${tile.x}/${tile.y}:${tileSignature(candidates)}:scale${normalizedScale}`;
+    const cacheKey = `${layerKey}|${tile.z}/${tile.x}/${tile.y}:${tileSignature(candidates)}:scale${normalizedScale}`;
     ordered.push({ tile, bounds, cacheKey, candidates });
   }
   return ordered;
@@ -342,6 +355,7 @@ export async function buildTrafficLayersAsync(
   cells: RenderableCell[],
   visibleTiles: TileKey[],
   normalizationMax: number,
+  layerKey: string,
   signal: AbortSignal,
   onPartialLayers?: (layers: BitmapLayer[]) => void
 ): Promise<BitmapLayer[]> {
@@ -352,7 +366,7 @@ export async function buildTrafficLayersAsync(
   const scaleStep = Math.max(1, Math.round(normalizationMax * 0.02));
   const normalizedScale = Math.max(scaleStep, Math.round(normalizationMax / scaleStep) * scaleStep);
 
-  const ordered = collectOrderedTiles(cells, visibleTiles, normalizedScale);
+  const ordered = collectOrderedTiles(layerKey, cells, visibleTiles, normalizedScale);
   if (ordered.length === 0) {
     return [];
   }
@@ -373,7 +387,7 @@ export async function buildTrafficLayersAsync(
   }
 
   if (onPartialLayers && !signal.aborted) {
-    onPartialLayers(buildPartialLayersWithPlaceholders(ordered, jobs));
+    onPartialLayers(buildPartialLayersWithPlaceholders(layerKey, ordered, jobs));
   }
 
   let freshTiles = new Map<string, HTMLCanvasElement>();
@@ -413,7 +427,7 @@ export async function buildTrafficLayersAsync(
           putCache(data.layer.cacheKey, canvas);
           freshTiles.set(data.layer.cacheKey, canvas);
           if (onPartialLayers && !signal.aborted) {
-            onPartialLayers(buildPartialLayersWithPlaceholders(ordered, jobs));
+            onPartialLayers(buildPartialLayersWithPlaceholders(layerKey, ordered, jobs));
           }
           return;
         }
@@ -447,7 +461,7 @@ export async function buildTrafficLayersAsync(
         putCache(item.cacheKey, canvas);
       }
     } else {
-      rememberSlotCanvas(item.tile, canvas);
+      rememberSlotCanvas(layerKey, item.tile, canvas);
     }
     if (!canvas) {
       continue;

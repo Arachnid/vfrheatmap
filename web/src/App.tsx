@@ -6,7 +6,7 @@ import maplibregl from "maplibre-gl";
 import { BottomBar } from "./components/BottomBar";
 import { ControlPanel } from "./components/ControlPanel";
 import { buildAbsoluteShareUrl, buildSearchParamsString, parseAppShareFromSearch } from "./lib/shareUrl";
-import { buildTrafficLayersAsync } from "./layers/traffic";
+import { buildTrafficLayersAsync, trafficLayerCacheKey } from "./layers/traffic";
 import { cellsWithMetric } from "./tiles/filter";
 import { TileManager } from "./tiles/manager";
 import { tilesForViewport, type TileKey } from "./tiles/tileMath";
@@ -377,6 +377,10 @@ export default function App() {
     }
     return positiveValues.reduce((max, value) => Math.max(max, value), 0);
   }, [manifest, selectedClassifications, metric, renderableCells, dominantH3Resolution]);
+  const trafficHeatLayerKey = useMemo(
+    () => trafficLayerCacheKey(selectedClassifications),
+    [selectedClassifications]
+  );
   const flightsTotal = renderableCells.reduce((acc, cell) => acc + cell.flight_count, 0);
   const secondsTotal = renderableCells.reduce((acc, cell) => acc + cell.time_seconds, 0);
 
@@ -414,16 +418,23 @@ export default function App() {
     const overlay = overlayRef.current;
     const controller = new AbortController();
 
-    buildTrafficLayersAsync(renderableCells, visibleTiles, heatmapScaleMax, controller.signal, (partialLayers) => {
-      if (controller.signal.aborted || !overlayRef.current) {
-        return;
+    buildTrafficLayersAsync(
+      renderableCells,
+      visibleTiles,
+      heatmapScaleMax,
+      trafficHeatLayerKey,
+      controller.signal,
+      (partialLayers) => {
+        if (controller.signal.aborted || !overlayRef.current) {
+          return;
+        }
+        try {
+          overlayRef.current.setProps({ layers: partialLayers });
+        } catch (layerError) {
+          console.error("[app] failed to set partial traffic layers", layerError);
+        }
       }
-      try {
-        overlayRef.current.setProps({ layers: partialLayers });
-      } catch (layerError) {
-        console.error("[app] failed to set partial traffic layers", layerError);
-      }
-    })
+    )
       .then((trafficLayers) => {
         if (controller.signal.aborted) {
           return;
@@ -448,7 +459,7 @@ export default function App() {
       });
 
     return () => controller.abort();
-  }, [renderableCells, visibleTiles, heatmapScaleMax]);
+  }, [renderableCells, visibleTiles, heatmapScaleMax, trafficHeatLayerKey]);
 
   if (error) {
     return <div className="p-4 text-sm text-red-700">{error}</div>;
