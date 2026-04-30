@@ -1,11 +1,11 @@
 import { MapboxOverlay } from "@deck.gl/mapbox";
-import type { Layer } from "@deck.gl/core";
 import { getResolution } from "h3-js";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 
 import { BottomBar } from "./components/BottomBar";
 import { ControlPanel } from "./components/ControlPanel";
+import { buildAbsoluteShareUrl, buildSearchParamsString, parseAppShareFromSearch } from "./lib/shareUrl";
 import { buildTrafficLayersAsync } from "./layers/traffic";
 import { cellsWithMetric } from "./tiles/filter";
 import { TileManager } from "./tiles/manager";
@@ -46,6 +46,10 @@ const LIGHT_BASEMAP_STYLE: maplibregl.StyleSpecification = rasterStyle(
   "#f8fafc"
 );
 
+/** Parsed once at module load (browser only); drives initial controls + optional fitBounds. */
+const INITIAL_SHARE =
+  typeof window !== "undefined" ? parseAppShareFromSearch(window.location.search) : {};
+
 export default function App() {
   const mapContainer = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -56,11 +60,11 @@ export default function App() {
   const [manifest, setManifest] = useState<Manifest | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [cells, setCells] = useState<TileCell[]>([]);
-  const [showVfr, setShowVfr] = useState(true);
-  const [showIfr, setShowIfr] = useState(false);
-  const [showHelicopter, setShowHelicopter] = useState(false);
-  const [metric, setMetric] = useState<Metric>("flight_count");
-  const [showAirspace, setShowAirspace] = useState(true);
+  const [showVfr, setShowVfr] = useState(INITIAL_SHARE.showVfr ?? true);
+  const [showIfr, setShowIfr] = useState(INITIAL_SHARE.showIfr ?? false);
+  const [showHelicopter, setShowHelicopter] = useState(INITIAL_SHARE.showHelicopter ?? false);
+  const [metric, setMetric] = useState<Metric>(INITIAL_SHARE.metric ?? "flight_count");
+  const [showAirspace, setShowAirspace] = useState(INITIAL_SHARE.showAirspace ?? true);
   const [visibleTiles, setVisibleTiles] = useState<TileKey[]>([]);
 
   const selectedClassifications = useMemo(() => {
@@ -80,6 +84,39 @@ export default function App() {
   useEffect(() => {
     selectedClassificationsRef.current = selectedClassifications;
   }, [selectedClassifications]);
+
+  const syncShareUrlRef = useRef<() => void>(() => {});
+
+  useEffect(() => {
+    syncShareUrlRef.current = () => {
+      const map = mapRef.current;
+      if (!map?.loaded()) {
+        return;
+      }
+      const b = map.getBounds();
+      const nextUrl = `${window.location.pathname}?${buildSearchParamsString({
+        bounds: {
+          west: b.getWest(),
+          south: b.getSouth(),
+          east: b.getEast(),
+          north: b.getNorth(),
+        },
+        showVfr,
+        showIfr,
+        showHelicopter,
+        metric,
+        showAirspace,
+      })}`;
+      const current = `${window.location.pathname}${window.location.search}`;
+      if (nextUrl !== current) {
+        window.history.replaceState(null, "", nextUrl);
+      }
+    };
+  }, [showVfr, showIfr, showHelicopter, metric, showAirspace]);
+
+  useEffect(() => {
+    syncShareUrlRef.current();
+  }, [showVfr, showIfr, showHelicopter, metric, showAirspace]);
 
   useEffect(() => {
     const onError = (event: ErrorEvent) => {
@@ -166,6 +203,17 @@ export default function App() {
 
     const MOVE_TILE_RELOAD_MS = 80;
     let lastMoveTileReload = 0;
+    let shareUrlDebounce: ReturnType<typeof setTimeout> | undefined;
+
+    const scheduleShareUrlSync = () => {
+      if (shareUrlDebounce !== undefined) {
+        clearTimeout(shareUrlDebounce);
+      }
+      shareUrlDebounce = setTimeout(() => {
+        shareUrlDebounce = undefined;
+        syncShareUrlRef.current();
+      }, 350);
+    };
 
     const runReloadTiles = (label: string) => {
       reloadTiles().catch((error: unknown) => {
@@ -187,14 +235,28 @@ export default function App() {
     };
 
     map.on("load", () => {
+      if (INITIAL_SHARE.bounds) {
+        map.fitBounds(
+          [
+            [INITIAL_SHARE.bounds.west, INITIAL_SHARE.bounds.south],
+            [INITIAL_SHARE.bounds.east, INITIAL_SHARE.bounds.north],
+          ],
+          { duration: 0, padding: 32 }
+        );
+      }
       runReloadTiles("load");
+      scheduleShareUrlSync();
     });
     map.on("move", reloadTilesOnMove);
     map.on("moveend", () => {
       lastMoveTileReload = Date.now();
       runReloadTiles("moveend");
+      scheduleShareUrlSync();
     });
     return () => {
+      if (shareUrlDebounce !== undefined) {
+        clearTimeout(shareUrlDebounce);
+      }
       reloadTilesRef.current = null;
       map.remove();
       mapRef.current = null;
@@ -318,6 +380,33 @@ export default function App() {
   const flightsTotal = renderableCells.reduce((acc, cell) => acc + cell.flight_count, 0);
   const secondsTotal = renderableCells.reduce((acc, cell) => acc + cell.time_seconds, 0);
 
+  const handleCopyShareLink = useCallback(async () => {
+    const map = mapRef.current;
+    if (!map?.loaded()) {
+      return;
+    }
+    const b = map.getBounds();
+    try {
+      await navigator.clipboard.writeText(
+        buildAbsoluteShareUrl({
+          bounds: {
+            west: b.getWest(),
+            south: b.getSouth(),
+            east: b.getEast(),
+            north: b.getNorth(),
+          },
+          showVfr,
+          showIfr,
+          showHelicopter,
+          metric,
+          showAirspace,
+        })
+      );
+    } catch (copyError: unknown) {
+      console.error("[app] copy share link failed", copyError);
+    }
+  }, [showVfr, showIfr, showHelicopter, metric, showAirspace]);
+
   useEffect(() => {
     if (!overlayRef.current) {
       return;
@@ -379,6 +468,7 @@ export default function App() {
         onToggleHelicopter={() => setShowHelicopter((prev) => !prev)}
         onMetricChange={setMetric}
         onToggleAirspace={() => setShowAirspace((prev) => !prev)}
+        onCopyShareLink={handleCopyShareLink}
       />
       {manifest ? (
         <BottomBar
