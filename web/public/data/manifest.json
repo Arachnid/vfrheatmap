@@ -1,6 +1,6 @@
 {
   "schema_version": 3,
-  "generated_at": "2026-04-30T09:14:10.468841Z",
+  "generated_at": "2026-05-03T14:59:19.065144Z",
   "bbox": [
     49.0,
     -8.0,
@@ -8,7 +8,7 @@
     2.0
   ],
   "date_range": {
-    "start": "2026-03-01",
+    "start": "2025-04-01",
     "end": "2026-03-31"
   },
   "classifier_config_hash": "b8fb90b12709de03",
@@ -26,110 +26,110 @@
   ],
   "classification_scales": {
     "vfr": {
-      "flight_count_max": 105731.0,
-      "time_seconds_max": 2695497.188652916,
+      "flight_count_max": 1183223.0,
+      "time_seconds_max": 11069753.99724478,
       "by_resolution": {
         "5": {
-          "flight_count_max": 105731.0,
-          "time_seconds_max": 2695497.188652916,
-          "flight_count_p90": 12131.0,
-          "time_seconds_p90": 54434.952388145415
+          "flight_count_max": 1183223.0,
+          "time_seconds_max": 11069753.99724478,
+          "flight_count_p90": 103126.0,
+          "time_seconds_p90": 398259.0116521312
         },
         "6": {
-          "flight_count_max": 31179.0,
-          "time_seconds_max": 2691873.426198736,
-          "flight_count_p90": 1965.1000000000004,
-          "time_seconds_p90": 8652.505270732685
+          "flight_count_max": 339782.0,
+          "time_seconds_max": 11006648.75677706,
+          "flight_count_p90": 14267.3,
+          "time_seconds_p90": 54575.34253395939
         },
         "7": {
-          "flight_count_max": 10800.0,
-          "time_seconds_max": 2177223.057874364,
-          "flight_count_p90": 345.0,
-          "time_seconds_p90": 1550.3135691446741
+          "flight_count_max": 131758.0,
+          "time_seconds_max": 9287545.400278375,
+          "flight_count_p90": 2146.100000000006,
+          "time_seconds_p90": 8143.0308899518095
         },
         "8": {
-          "flight_count_max": 5961.0,
-          "time_seconds_max": 1402281.6110790668,
-          "flight_count_p90": 63.0,
-          "time_seconds_p90": 290.99005449774097
+          "flight_count_max": 29503.0,
+          "time_seconds_max": 5066822.753420828,
+          "flight_count_p90": 348.0,
+          "time_seconds_p90": 1353.785383433908
         },
         "9": {
-          "flight_count_max": 2312.0,
-          "time_seconds_max": 836363.7841179986,
-          "flight_count_p90": 12.0,
-          "time_seconds_p90": 55.55376337958792
+          "flight_count_max": 8592.0,
+          "time_seconds_max": 3388821.8659576946,
+          "flight_count_p90": 64.0,
+          "time_seconds_p90": 250.39276271952022
         }
       }
     },
     "ifr": {
-      "flight_count_max": 117255.0,
-      "time_seconds_max": 1057346.7186705947,
+      "flight_count_max": 3935063.0,
+      "time_seconds_max": 6674303.874881089,
       "by_resolution": {
         "5": {
-          "flight_count_max": 117255.0,
-          "time_seconds_max": 1057346.7186705947,
-          "flight_count_p90": 23298.0,
-          "time_seconds_p90": 37768.59346024384
+          "flight_count_max": 3935063.0,
+          "time_seconds_max": 6674303.874881089,
+          "flight_count_p90": 584627.5,
+          "time_seconds_p90": 780290.4856174227
         },
         "6": {
-          "flight_count_max": 32140.0,
-          "time_seconds_max": 1010607.0399594284,
-          "flight_count_p90": 3447.2000000000007,
-          "time_seconds_p90": 5603.008629428303
+          "flight_count_max": 1422657.0,
+          "time_seconds_max": 3225978.419045729,
+          "flight_count_p90": 85359.20000000003,
+          "time_seconds_p90": 113547.71654049755
         },
         "7": {
-          "flight_count_max": 8911.0,
-          "time_seconds_max": 942902.492987272,
-          "flight_count_p90": 509.0,
-          "time_seconds_p90": 828.7535303689306
+          "flight_count_max": 538922.0,
+          "time_seconds_max": 1334242.4472181557,
+          "flight_count_p90": 12320.0,
+          "time_seconds_p90": 16319.575975344656
         },
         "8": {
-          "flight_count_max": 4060.0,
-          "time_seconds_max": 933233.3422368497,
-          "flight_count_p90": 79.0,
-          "time_seconds_p90": 131.09766406859248
+          "flight_count_max": 157139.0,
+          "time_seconds_max": 1218830.3610990802,
+          "flight_count_p90": 1754.0,
+          "time_seconds_p90": 2323.9351206967112
         },
         "9": {
-          "flight_count_max": 1405.0,
-          "time_seconds_max": 474064.52386682987,
-          "flight_count_p90": 13.0,
-          "time_seconds_p90": 22.468265215314787
+          "flight_count_max": 64774.0,
+          "time_seconds_max": 543646.4446563044,
+          "flight_count_p90": 250.0,
+          "time_seconds_p90": 328.58685682867963
         }
       }
     },
     "helicopter": {
-      "flight_count_max": 32294.0,
-      "time_seconds_max": 213080.6123344848,
+      "flight_count_max": 427209.0,
+      "time_seconds_max": 2655461.380184077,
       "by_resolution": {
         "5": {
-          "flight_count_max": 32294.0,
-          "time_seconds_max": 213080.6123344848,
-          "flight_count_p90": 6854.300000000003,
-          "time_seconds_p90": 27274.810984740972
+          "flight_count_max": 427209.0,
+          "time_seconds_max": 2655461.380184077,
+          "flight_count_p90": 52506.0,
+          "time_seconds_p90": 189295.89944120435
         },
         "6": {
-          "flight_count_max": 13059.0,
-          "time_seconds_max": 78200.10883003566,
-          "flight_count_p90": 1129.4000000000005,
-          "time_seconds_p90": 4384.023427735137
+          "flight_count_max": 152702.0,
+          "time_seconds_max": 811335.6301317841,
+          "flight_count_p90": 8337.700000000004,
+          "time_seconds_p90": 28466.139855436028
         },
         "7": {
-          "flight_count_max": 3748.0,
-          "time_seconds_max": 21424.652857896468,
-          "flight_count_p90": 185.0,
-          "time_seconds_p90": 720.768762585077
+          "flight_count_max": 49210.0,
+          "time_seconds_max": 329644.1159043456,
+          "flight_count_p90": 1326.0,
+          "time_seconds_p90": 4661.158952208921
         },
         "8": {
-          "flight_count_max": 1011.0,
-          "time_seconds_max": 7495.068922265904,
-          "flight_count_p90": 31.0,
-          "time_seconds_p90": 123.47849363363352
+          "flight_count_max": 16026.0,
+          "time_seconds_max": 257462.11857284006,
+          "flight_count_p90": 214.0,
+          "time_seconds_p90": 773.424706101218
         },
         "9": {
-          "flight_count_max": 196.0,
-          "time_seconds_max": 1745.8119054445758,
-          "flight_count_p90": 6.0,
-          "time_seconds_p90": 23.926112853434226
+          "flight_count_max": 6058.0,
+          "time_seconds_max": 103142.88175696485,
+          "flight_count_p90": 36.0,
+          "time_seconds_p90": 133.29175066588286
         }
       }
     }

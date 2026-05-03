@@ -113,6 +113,13 @@ def ingest(
         airspace_ref=airspace_ref,
     )
     finished_at = datetime.now(tz=UTC)
+    log = logging.getLogger(__name__)
+    log.info(
+        "Ray pipeline finished; loading parquet into DuckDB at %s (dates %s–%s). This can take several minutes for large runs.",
+        output,
+        start,
+        end,
+    )
     finalise_to_duckdb(
         FinaliseInput(
             output_path=output,
@@ -125,7 +132,8 @@ def ingest(
             ingest_result=ingest_result,
         )
     )
-    logging.getLogger(__name__).info("Ingest complete: aggregate tables written to %s", output)
+    log.info("Ingest complete: aggregate tables written to %s", output)
+    log.info("Shutting down Ray...")
     ray.shutdown()
 
 

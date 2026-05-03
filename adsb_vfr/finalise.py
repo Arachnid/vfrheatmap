@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import shutil
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -9,6 +10,8 @@ import duckdb
 
 from adsb_vfr.config import ClassifierConfig
 from adsb_vfr.pipeline import IngestResult
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -131,5 +134,6 @@ def finalise_to_duckdb(payload: FinaliseInput) -> None:
 
     _write_ingest_run(conn=conn, payload=payload)
     conn.close()
+    LOGGER.info("Removing temporary pipeline directory %s ...", payload.ingest_result.temp_dir)
     shutil.rmtree(payload.ingest_result.temp_dir, ignore_errors=True)
 

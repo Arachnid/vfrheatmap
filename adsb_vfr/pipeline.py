@@ -43,6 +43,9 @@ class _UnknownSegmentAccumulator:
     def add(self, segment_ids: list[int]) -> None:
         self._ids.update(int(x) for x in segment_ids)
 
+    def ping(self) -> None:
+        """Barrier: after the dataset finishes, wait on this so all async `add` calls are applied."""
+
     def distinct_count(self) -> int:
         return len(self._ids)
 
@@ -65,7 +68,7 @@ def _segment_to_edges_batch_count_unknown(
         if bool(mask.any()):
             ids = out.loc[mask, "segment_id"].drop_duplicates().astype(int).tolist()
             if ids:
-                ray.get(unknown_accumulator.add.remote(ids))
+                unknown_accumulator.add.remote(ids)
     return out
 
 
@@ -581,6 +584,10 @@ def build_and_run_pipeline(
         parse_correct_flatmap,
         fn_kwargs={"era5_ref": era5_ref, "bbox": bbox},
     )
+    # Ray Data fuses FlatMap with the hash shuffle by default. That fusion drives huge rows
+    # through shuffle map tasks (see ShuffleTaskSpec warning: oversized blocks / OOM / stalls).
+    # Materializing breaks fusion so repartition runs on stable blocks (same fix as Ray docs).
+    points_ds = points_ds.materialize()
     # Keep shuffle parallelism stable regardless of date-range length.
     # Basing partitions on number of days causes severe skew for single-day runs.
     available_cpus = int(ray.available_resources().get("CPU", 1))
@@ -611,6 +618,7 @@ def build_and_run_pipeline(
     )
     unified_aggregates_ds = aggregates_ds.map(to_unified_aggregate_row)
     unified_aggregates_ds.write_parquet(str(pipeline_output_dir))
+    ray.get(unknown_accumulator.ping.remote())
     unknown_traces_dropped = int(ray.get(unknown_accumulator.distinct_count.remote()))
     LOGGER.info("Unknown segments not mapped to vfr/ifr/helicopter layers: %s (distinct segment_id)", unknown_traces_dropped)
     return IngestResult(
